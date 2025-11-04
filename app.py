@@ -107,6 +107,14 @@ async def stream_task():
 
 async def main():
     await asyncio.gather(run_http(), stream_task())
+    await asyncio.gather(run_http(), stream_task(), heartbeat())
+
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+async def heartbeat():
+    while True:
+        print("bot alive")
+        await asyncio.sleep(30)
+
