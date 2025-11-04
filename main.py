@@ -15,6 +15,44 @@ from config import settings
 from risk import check_drawdown
 from screener import DailyGainScreener
 
+from fastapi import FastAPI
+import uvicorn
+
+app = FastAPI()
+
+@app.get("/health")
+def health():
+    return {
+        "status": "running",
+        "mode": settings.mode,
+        "daily_pnl": trader.daily_pnl,
+        "positions": len(trader.positions)
+    }
+
+@app.get("/positions")
+def get_positions():
+    return {
+        "positions": [
+            {
+                "symbol": p.symbol,
+                "shares": p.shares,
+                "pnl": p.pnl,
+                "pnl_pct": p.pnl_pct
+            }
+            for p in trader.positions.values()
+        ]
+    }
+
+# Run both HTTP server and trading
+async def run_all():
+    config = uvicorn.Config(app, host="0.0.0.0", port=10000)
+    server = uvicorn.Server(config)
+    
+    await asyncio.gather(
+        server.serve(),
+        trader.run(symbols)
+    )
+
 # ---- toy SMA crossover parameters ----
 WINDOW_SHORT = 5
 WINDOW_LONG = 20
