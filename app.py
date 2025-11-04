@@ -74,7 +74,6 @@ def signal(symbol: str) -> str | None:
     return None
 
 async def stream_task():
-    # Map env var (string) to Alpaca's DataFeed enum
     feed_map = {"iex": DataFeed.IEX, "sip": DataFeed.SIP}
     feed_enum = feed_map.get(settings.feed.lower(), DataFeed.IEX)
 
@@ -84,7 +83,6 @@ async def stream_task():
         feed=feed_enum
     )
 
-    @stream.on_bar
     async def handle_bar(bar):
         symbol = bar.symbol
         q = bars.setdefault(symbol, deque(maxlen=WINDOW_LONG))
@@ -99,11 +97,13 @@ async def stream_task():
         elif sig == "sell":
             await submit_usd_market(symbol, settings.max_usd_per_order, OrderSide.SELL)
 
+    # subscribe bars for each symbol
     for s in settings.symbols:
         stream.subscribe_bars(handle_bar, s.strip())
 
-    print(f"subscribed to bars for {settings.symbols} on feed {feed_enum.name.lower()}")
+    print(f"subscribed to bars for {settings.symbols} on {feed_enum.name.lower()}")
     await stream.run()
+
 
 async def main():
     await asyncio.gather(run_http(), stream_task())
