@@ -1,5 +1,7 @@
 from collections import deque
 from statistics import fmean
+from typing import List
+from datetime import datetime
 from strategy import BaseStrategy, Signal, Position
 
 

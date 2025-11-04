@@ -6,7 +6,7 @@ services:
     region: oregon
     plan: starter
     buildCommand: pip install -r requirements.txt
-    startCommand: python app.py
+    startCommand: python main.py
     envVars:
       - key: PYTHON_VERSION
         value: "3.12.0"
@@ -26,3 +26,11 @@ services:
         value: "iex"
       - key: SYMBOLS
         value: "AAPL,MSFT,GOOGL"
+      - key: SHORT_WINDOW
+        value: "5"
+      - key: LONG_WINDOW
+        value: "20"
+      - key: VOLUME_THRESHOLD
+        value: "1.5"
+      - key: STOP_LOSS_PCT
+        value: "0.02"

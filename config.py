@@ -1,6 +1,7 @@
 import os
 from pydantic_settings import BaseSettings
 
+
 class Settings(BaseSettings):
     # Alpaca credentials
     alpaca_key: str = os.getenv('ALPACA_KEY', '')
@@ -17,8 +18,8 @@ class Settings(BaseSettings):
     # Strategy parameters
     short_window: int = int(os.getenv('SHORT_WINDOW', '5'))
     long_window: int = int(os.getenv('LONG_WINDOW', '20'))
-    volume_threshold: float = 1.5
-    stop_loss_pct: float = 0.02
+    volume_threshold: float = float(os.getenv('VOLUME_THRESHOLD', '1.5'))
+    stop_loss_pct: float = float(os.getenv('STOP_LOSS_PCT', '0.02'))
     
     # Mode
     mode: str = "live"
@@ -26,7 +27,9 @@ class Settings(BaseSettings):
     class Config:
         case_sensitive = False
 
+
 settings = Settings()
+
 
 # Validate
 if not settings.alpaca_key or not settings.alpaca_secret:

@@ -1,5 +1,6 @@
 import pandas as pd
 from datetime import datetime, timedelta
+from typing import List
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
