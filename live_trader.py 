@@ -1,0 +1,145 @@
+import asyncio
+from alpaca.trading.client import TradingClient
+from alpaca.trading.requests import MarketOrderRequest
+from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass
+from alpaca.data.live import StockDataStream
+from alpaca.data.enums import DataFeed
+from strategy import BaseStrategy, Position
+from config import settings
+
+
+class LiveTrader:
+    """Execute live trades based on strategy signals"""
+    
+    def __init__(self, strategy: BaseStrategy):
+        self.strategy = strategy
+        self.trading_client = TradingClient(
+            settings.alpaca_key,
+            settings.alpaca_secret,
+            paper=settings.paper
+        )
+        self.positions: dict[str, Position] = {}
+        self.market_data: dict = {}
+        self.allow_trading = settings.allow_trading
+        
+        # Risk limits
+        self.max_position_size = settings.max_usd_per_order
+        self.max_daily_loss = settings.max_daily_loss
+        self.daily_pnl = 0.0
+    
+    async def submit_order(self, symbol: str, side: OrderSide, notional: float):
+        """Submit market order"""
+        if not self.allow_trading:
+            print(f"Trading disabled. Would {side.name} ${notional:.2f} of {symbol}")
+            return
+        
+        try:
+            req = MarketOrderRequest(
+                symbol=symbol,
+                notional=notional,
+                side=side,
+                time_in_force=TimeInForce.DAY,
+                order_class=OrderClass.Simple
+            )
+            order = self.trading_client.submit_order(req)
+            print(f"✓ Order submitted: {side.name} ${notional:.2f} of {symbol}")
+            return order
+        except Exception as e:
+            print(f"✗ Order failed: {e}")
+            return None
+    
+    def check_risk_limits(self) -> bool:
+        """Check if we're within risk limits"""
+        if self.daily_pnl <= -self.max_daily_loss:
+            print(f"⚠ Daily loss limit reached: ${self.daily_pnl:.2f}")
+            return False
+        return True
+    
+    async def process_signals(self, signals: List[Signal]):
+        """Process trading signals"""
+        if not self.check_risk_limits():
+            return
+        
+        account = self.trading_client.get_account()
+        account_value = float(account.equity)
+        
+        for signal in signals:
+            if signal.action == 'buy':
+                # Calculate position size
+                size = self.strategy.get_position_size(
+                    signal.symbol, 
+                    account_value, 
+                    signal.confidence
+                )
+                size = min(size, self.max_position_size)
+                
+                # Submit order
+                await self.submit_order(signal.symbol, OrderSide.BUY, size)
+            
+            elif signal.action == 'sell' and signal.symbol in self.positions:
+                # Close position
+                pos = self.positions[signal.symbol]
+                notional = pos.shares * pos.current_price
+                await self.submit_order(signal.symbol, OrderSide.SELL, notional)
+    
+    async def handle_bar(self, bar):
+        """Handle incoming bar data"""
+        symbol = bar.symbol
+        
+        # Update market data
+        self.market_data[symbol] = {
+            'open': bar.open,
+            'high': bar.high,
+            'low': bar.low,
+            'close': bar.close,
+            'volume': bar.volume
+        }
+        
+        # Update positions
+        if symbol in self.positions:
+            pos = self.positions[symbol]
+            pos.current_price = bar.close
+            pos.pnl = (bar.close - pos.entry_price) * pos.shares
+            pos.pnl_pct = (bar.close - pos.entry_price) / pos.entry_price
+            
+            # Check exit
+            if self.strategy.should_exit(pos, self.market_data):
+                print(f"Exit signal for {symbol}: PnL {pos.pnl_pct*100:.2f}%")
+                await self.submit_order(symbol, OrderSide.SELL, pos.shares * bar.close)
+                self.daily_pnl += pos.pnl
+                del self.positions[symbol]
+        
+        # Generate signals
+        signals = self.strategy.generate_signals(self.market_data)
+        
+        if signals:
+            print(f"Generated {len(signals)} signals")
+            await self.process_signals(signals)
+    
+    async def run(self, symbols: List[str]):
+        """Start live trading"""
+        print(f"Starting live trader with {self.strategy.name}")
+        print(f"Trading {len(symbols)} symbols")
+        print(f"Paper trading: {settings.paper}")
+        
+        feed_map = {"iex": DataFeed.IEX, "sip": DataFeed.SIP}
+        feed = feed_map.get(settings.feed.lower(), DataFeed.IEX)
+        
+        while True:
+            try:
+                stream = StockDataStream(
+                    settings.alpaca_key,
+                    settings.alpaca_secret,
+                    feed=feed
+                )
+                
+                # Subscribe
+                for symbol in symbols:
+                    stream.subscribe_bars(lambda bar: asyncio.create_task(self.handle_bar(bar)), symbol)
+                
+                print(f"Subscribed to {len(symbols)} symbols")
+                await stream.run()
+            
+            except Exception as e:
+                print(f"Stream error: {e}")
+                await asyncio.sleep(5)
