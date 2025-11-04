@@ -13,6 +13,7 @@ from alpaca.data.enums import DataFeed
 
 from config import settings
 from risk import check_drawdown
+from screener import DailyGainScreener
 
 # ---- toy SMA crossover parameters ----
 WINDOW_SHORT = 5
@@ -23,6 +24,10 @@ pnl_today = 0.0
 
 app = FastAPI()
 allow_trading_flag = settings.allow_trading
+
+# Global screener instance
+screener = DailyGainScreener()
+daily_picks: list = []
 
 
 # ---------- admin endpoints (local to worker) ----------
@@ -37,6 +42,91 @@ def kill(token: str):
 @app.get("/health")
 def health():
     return {"ok": True, "allow_trading": allow_trading_flag}
+
+@app.get("/screen")
+async def run_screener(top_n: int = 20):
+    """Run the stock screener and return top picks"""
+    global daily_picks
+    
+    watchlist = [
+        # Mega Cap Tech
+        "AAPL", "MSFT", "GOOGL", "GOOG", "AMZN", "META", "TSLA", "NVDA", "AVGO", "ORCL",
+        "ADBE", "CRM", "CSCO", "ACN", "IBM", "INTC", "AMD", "QCOM", "TXN", "AMAT",
+        "INTU", "NOW", "PANW", "SNPS", "CDNS", "ADSK", "MCHP", "KLAC", "LRCX", "NXPI",
+        
+        # Communication & Media
+        "NFLX", "DIS", "CMCSA", "T", "VZ", "TMUS", "CHTR", "EA", "TTWO", "WBD",
+        "SPOT", "RBLX", "U", "MTCH", "PINS", "SNAP", "ROKU", "PARA", "FOXA", "NWS",
+        
+        # Finance
+        "JPM", "BAC", "WFC", "C", "GS", "MS", "BLK", "SCHW", "AXP", "SPGI",
+        "CB", "PGR", "TFC", "USB", "PNC", "BK", "COF", "AFL", "MET", "PRU",
+        "AIG", "ALL", "TRV", "AMP", "SOFI", "AFRM", "UPST", "LC", "SQ", "PYPL",
+        
+        # Healthcare & Biotech
+        "UNH", "JNJ", "LLY", "ABBV", "MRK", "PFE", "TMO", "ABT", "DHR", "BMY",
+        "AMGN", "GILD", "CVS", "CI", "VRTX", "REGN", "ISRG", "SYK", "BSX", "MDT",
+        "ELV", "ZTS", "DXCM", "HUM", "BDX", "EW", "IDXX", "RMD", "MTD", "IQV",
+        
+        # Consumer Discretionary
+        "HD", "MCD", "NKE", "SBUX", "LOW", "TJX", "BKNG", "CMG",
+        "MAR", "HLT", "ABNB", "GM", "F", "RIVN", "LCID", "NIO", "LI", "XPEV",
+        "DASH", "UBER", "LYFT", "CVNA", "RH", "ETSY", "W", "CHWY",
+        
+        # Consumer Staples
+        "PG", "KO", "PEP", "COST", "WMT", "PM", "MO", "EL", "CL", "MDLZ",
+        
+        # Energy
+        "XOM", "CVX", "COP", "SLB", "EOG", "MPC", "PSX", "VLO", "OXY", "HAL",
+        
+        # Industrials
+        "BA", "CAT", "UPS", "RTX", "HON", "LMT", "GE", "DE", "UNP", "MMM",
+        
+        # High Growth
+        "COIN", "HOOD", "PLTR", "SNOW", "DDOG", "NET", "CRWD", "ZS", "OKTA", "MDB",
+        
+        # EVs & Clean Energy
+        "ENPH", "SEDG", "RUN", "PLUG", "FCEL", "BE", "BLNK",
+    ]
+    
+    results = await screener.screen_stocks(symbols=watchlist, top_n=top_n)
+    daily_picks = results
+    
+    return {
+        "timestamp": asyncio.get_event_loop().time(),
+        "count": len(results),
+        "stocks": [
+            {
+                "symbol": s.symbol,
+                "score": s.score,
+                "price": s.price,
+                "premarket_change": s.premarket_change,
+                "volume_ratio": s.volume_ratio,
+                "rsi": s.rsi,
+                "reasons": s.reasons
+            }
+            for s in results
+        ]
+    }
+
+@app.get("/picks")
+def get_daily_picks():
+    """Get the current daily picks from last screen"""
+    return {
+        "count": len(daily_picks),
+        "stocks": [
+            {
+                "symbol": s.symbol,
+                "score": s.score,
+                "price": s.price,
+                "premarket_change": s.premarket_change,
+                "volume_ratio": s.volume_ratio,
+                "rsi": s.rsi,
+                "reasons": s.reasons
+            }
+            for s in daily_picks
+        ]
+    }
 
 
 # ---------- http server ----------
@@ -111,17 +201,43 @@ async def stream_task():
                 feed=feed_enum,
             )
 
+            # Use daily picks if available, otherwise use default symbols
+            symbols_to_trade = [s.symbol for s in daily_picks] if daily_picks else settings.symbols
+            
             # subscribe for each symbol
-            for s in settings.symbols:
+            for s in symbols_to_trade:
                 stream.subscribe_bars(handle_bar, s.strip())
 
-            print(f"subscribed to bars for {settings.symbols} on feed {feed_enum.name.lower()}")
+            print(f"subscribed to bars for {len(symbols_to_trade)} symbols on feed {feed_enum.name.lower()}")
             await stream.run()  # blocks until stopped or error
         except Exception as e:
             print("stream loop error:", repr(e))
             await asyncio.sleep(3)
-        # do not call stream.stop() here; some versions return None internals
-        # simply loop and rebuild the stream
+
+
+# ---------- scheduled screener task ----------
+async def scheduled_screener():
+    """Run screener at market open (9:30 AM ET)"""
+    while True:
+        from datetime import datetime
+        import pytz
+        
+        now = datetime.now(pytz.timezone('US/Eastern'))
+        
+        # Run screener at 9:15 AM ET (before market open)
+        if now.hour == 9 and now.minute == 15:
+            print("Running daily screener...")
+            try:
+                await run_screener(top_n=20)
+                print(f"Screener complete! Found {len(daily_picks)} stocks")
+            except Exception as e:
+                print(f"Screener error: {e}")
+            
+            # Sleep for an hour to avoid running multiple times
+            await asyncio.sleep(3600)
+        else:
+            # Check every minute
+            await asyncio.sleep(60)
 
 
 # ---------- optional heartbeat so logs show liveness ----------
@@ -133,7 +249,12 @@ async def heartbeat():
 
 # ---------- entry ----------
 async def main():
-    await asyncio.gather(run_http(), stream_task(), heartbeat())
+    await asyncio.gather(
+        run_http(), 
+        stream_task(), 
+        heartbeat(),
+        scheduled_screener()  # Add scheduled screener
+    )
 
 if __name__ == "__main__":
     asyncio.run(main())
