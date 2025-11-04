@@ -1,24 +1,21 @@
 services:
   - type: worker
-    name: alpaca-bot
+    name: trading-bot
     env: python
-    plan: starter
-    buildCommand: "pip install -r requirements.txt"
-    startCommand: "python app.py"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
     envVars:
-      - key: APCA_API_KEY_ID
+      - key: ALPACA_KEY
         sync: false
-      - key: APCA_API_SECRET_KEY
+      - key: ALPACA_SECRET
         sync: false
-      - key: APCA_PAPER
-        value: "true"
-      - key: SYMBOLS
-        value: "SPY"
-      - key: MAX_USD_PER_ORDER
-        value: "500"
-      - key: MAX_DAILY_LOSS
-        value: "100"
-      - key: DATA_FEED
-        value: "iex"
+      - key: PAPER
+        value: true
       - key: ALLOW_TRADING
-        value: "true"
+        value: true
+      - key: MODE
+        value: live
+      - key: MAX_USD_PER_ORDER
+        value: 1000
+      - key: MAX_DAILY_LOSS
+        value: 500
