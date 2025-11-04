@@ -3,6 +3,7 @@ Modular Autonomous Trading Bot
 Uses separate strategy and trader components
 """
 
+import os
 import asyncio
 from typing import Optional
 from fastapi import FastAPI, HTTPException
@@ -30,7 +31,8 @@ def health():
         "trading_enabled": trader.allow_trading if trader else False,
         "daily_pnl": trader.daily_pnl if trader else 0,
         "positions": len(trader.positions) if trader else 0,
-        "total_trades": trader.total_trades if trader else 0
+        "total_trades": trader.total_trades if trader else 0,
+        "market_open": trader.is_market_open() if trader else False
     }
 
 
@@ -79,7 +81,10 @@ def get_stats():
 @app.post("/kill")
 def kill(token: str):
     """Emergency stop"""
-    if token != "let-me-in":
+    # Get kill token from environment, default to hardcoded value
+    kill_token = os.getenv('KILL_TOKEN', 'let-me-in')
+    
+    if token != kill_token:
         raise HTTPException(status_code=401, detail="Invalid token")
     
     if trader:
@@ -100,7 +105,7 @@ def root():
             "health": "/health",
             "positions": "/positions",
             "stats": "/stats",
-            "kill": "POST /kill?token=let-me-in"
+            "kill": "POST /kill?token=<your-token>"
         }
     }
 
@@ -111,10 +116,13 @@ def root():
 
 async def run_http():
     """Run FastAPI server"""
+    # Use PORT from environment (Render provides this), default to 10000
+    port = int(os.getenv('PORT', 10000))
+    
     config = uvicorn.Config(
         app, 
         host="0.0.0.0", 
-        port=10000, 
+        port=port, 
         log_level="info"
     )
     server = uvicorn.Server(config)
@@ -126,8 +134,10 @@ async def heartbeat():
     while True:
         if trader:
             win_rate = (trader.winning_trades / trader.total_trades * 100) if trader.total_trades > 0 else 0
+            market_status = "🟢 OPEN" if trader.is_market_open() else "🔴 CLOSED"
             print(
                 f"💓 Bot alive | "
+                f"Market: {market_status} | "
                 f"Positions: {len(trader.positions)} | "
                 f"Trades: {trader.total_trades} | "
                 f"Win Rate: {win_rate:.1f}% | "
@@ -152,6 +162,9 @@ async def main():
     if isinstance(symbols, str):
         symbols = [s.strip() for s in symbols.split(',')]
     
+    # Get port for display
+    port = int(os.getenv('PORT', 10000))
+    
     print(f"📋 Configuration:")
     print(f"   Mode: {'PAPER' if settings.paper else 'LIVE'}")
     print(f"   Trading: {'ENABLED' if settings.allow_trading else 'DISABLED'}")
@@ -160,6 +173,7 @@ async def main():
     print(f"   Max Position: ${settings.max_usd_per_order}")
     print(f"   Max Daily Loss: ${settings.max_daily_loss}")
     print(f"   Strategy: SMA Crossover ({settings.short_window}/{settings.long_window})")
+    print(f"   API Port: {port}")
     print("="*80 + "\n")
     
     # Create strategy
@@ -174,8 +188,8 @@ async def main():
     trader = LiveTrader(strategy)
     
     print("✅ Bot initialized successfully")
-    print(f"🌐 API will be available at http://0.0.0.0:10000")
-    print(f"📊 Health check: http://0.0.0.0:10000/health\n")
+    print(f"🌐 API available at http://0.0.0.0:{port}")
+    print(f"📊 Health check: http://0.0.0.0:{port}/health\n")
     
     # Run everything together
     await asyncio.gather(
