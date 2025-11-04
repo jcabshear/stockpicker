@@ -1,21 +1,28 @@
 services:
   - type: worker
-    name: trading-bot
+    name: stockpicker
+    runtime: python
     env: python
+    region: oregon
+    plan: starter
     buildCommand: pip install -r requirements.txt
-    startCommand: python main.py
+    startCommand: python app.py
     envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.0"
       - key: ALPACA_KEY
         sync: false
       - key: ALPACA_SECRET
         sync: false
       - key: PAPER
-        value: true
+        value: "true"
       - key: ALLOW_TRADING
-        value: true
-      - key: MODE
-        value: live
+        value: "false"
       - key: MAX_USD_PER_ORDER
-        value: 1000
+        value: "100"
       - key: MAX_DAILY_LOSS
-        value: 500
+        value: "50"
+      - key: FEED
+        value: "iex"
+      - key: SYMBOLS
+        value: "AAPL,MSFT,GOOGL"
