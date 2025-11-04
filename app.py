@@ -88,7 +88,7 @@ async def stream_task():
     feed_map = {"iex": DataFeed.IEX, "sip": DataFeed.SIP}
     feed_enum = feed_map.get(settings.feed.lower(), DataFeed.IEX)
 
-    async def handle_bar(bar):
+    def handle_bar(bar):
         symbol = bar.symbol
         q = bars.setdefault(symbol, deque(maxlen=WINDOW_LONG))
         q.append(bar.close)
@@ -98,9 +98,9 @@ async def stream_task():
 
         sig = signal(symbol)
         if sig == "buy":
-            await submit_usd_market(symbol, settings.max_usd_per_order, OrderSide.BUY)
+            asyncio.create_task(submit_usd_market(symbol, settings.max_usd_per_order, OrderSide.BUY))
         elif sig == "sell":
-            await submit_usd_market(symbol, settings.max_usd_per_order, OrderSide.SELL)
+            asyncio.create_task(submit_usd_market(symbol, settings.max_usd_per_order, OrderSide.SELL))
 
     # resilient loop: recreate the stream if the socket drops
     while True:
