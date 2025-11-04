@@ -2,8 +2,8 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     # Alpaca credentials
-    alpaca_key: str
-    alpaca_secret: str
+    ALPACA_KEY: str
+    ALPACA_SECRET: str
     paper: bool = True
     
     # Trading parameters
