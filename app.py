@@ -9,16 +9,17 @@ from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import MarketOrderRequest
 from alpaca.trading.enums import TimeInForce, OrderSide, OrderClass
 from alpaca.data.live import StockDataStream
+from alpaca.data.enums import DataFeed  # <-- important
 
 from config import settings
 from risk import check_drawdown
 
-# toy example: 1 minute SMA crossover
+# Toy example: 1-minute SMA crossover
 WINDOW_SHORT = 5
 WINDOW_LONG = 20
 
 bars: dict[str, deque] = {}
-pnl_today = 0.0  # you can wire this to account activities later
+pnl_today = 0.0  # wire to account activities later
 
 app = FastAPI()
 allow_trading_flag = settings.allow_trading
@@ -73,7 +74,15 @@ def signal(symbol: str) -> str | None:
     return None
 
 async def stream_task():
-    stream = StockDataStream(settings.alpaca_key, settings.alpaca_secret, feed=settings.feed)
+    # Map env var (string) to Alpaca's DataFeed enum
+    feed_map = {"iex": DataFeed.IEX, "sip": DataFeed.SIP}
+    feed_enum = feed_map.get(settings.feed.lower(), DataFeed.IEX)
+
+    stream = StockDataStream(
+        settings.alpaca_key,
+        settings.alpaca_secret,
+        feed=feed_enum
+    )
 
     @stream.on_bar
     async def handle_bar(bar):
@@ -93,7 +102,7 @@ async def stream_task():
     for s in settings.symbols:
         stream.subscribe_bars(handle_bar, s.strip())
 
-    print(f"subscribed to bars for {settings.symbols} on {settings.feed}")
+    print(f"subscribed to bars for {settings.symbols} on feed {feed_enum.name.lower()}")
     await stream.run()
 
 async def main():
