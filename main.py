@@ -126,23 +126,33 @@ async def run_http():
         log_level="info"
     )
     server = uvicorn.Server(config)
+    print(f"🌐 Starting HTTP server on port {port}...")
     await server.serve()
 
 
 async def heartbeat():
     """Periodic heartbeat"""
+    print("💓 Heartbeat task started")
+    await asyncio.sleep(5)  # Wait a bit for everything to initialize
+    
     while True:
-        if trader:
-            win_rate = (trader.winning_trades / trader.total_trades * 100) if trader.total_trades > 0 else 0
-            market_status = "🟢 OPEN" if trader.is_market_open() else "🔴 CLOSED"
-            print(
-                f"💓 Bot alive | "
-                f"Market: {market_status} | "
-                f"Positions: {len(trader.positions)} | "
-                f"Trades: {trader.total_trades} | "
-                f"Win Rate: {win_rate:.1f}% | "
-                f"Daily P&L: ${trader.daily_pnl:.2f}"
-            )
+        try:
+            if trader:
+                win_rate = (trader.winning_trades / trader.total_trades * 100) if trader.total_trades > 0 else 0
+                market_status = "🟢 OPEN" if trader.is_market_open() else "🔴 CLOSED"
+                print(
+                    f"💓 Bot alive | "
+                    f"Market: {market_status} | "
+                    f"Positions: {len(trader.positions)} | "
+                    f"Trades: {trader.total_trades} | "
+                    f"Win Rate: {win_rate:.1f}% | "
+                    f"Daily P&L: ${trader.daily_pnl:.2f}"
+                )
+            else:
+                print("💓 Heartbeat: Trader not initialized yet")
+        except Exception as e:
+            print(f"❌ Error in heartbeat: {e}")
+        
         await asyncio.sleep(60)
 
 
@@ -177,33 +187,54 @@ async def main():
     print("="*80 + "\n")
     
     # Create strategy
+    print("📊 Creating strategy...")
     strategy = SMACrossoverStrategy(
         short_window=settings.short_window,
         long_window=settings.long_window,
         volume_threshold=settings.volume_threshold,
         stop_loss_pct=settings.stop_loss_pct
     )
+    print(f"✅ Strategy created: {strategy.name}")
     
     # Create trader
+    print("🤖 Creating trader...")
     trader = LiveTrader(strategy)
+    print("✅ Trader created")
     
-    print("✅ Bot initialized successfully")
+    print("\n✅ Bot initialized successfully")
     print(f"🌐 API available at http://0.0.0.0:{port}")
     print(f"📊 Health check: http://0.0.0.0:{port}/health\n")
     
-    # Run everything together
-    await asyncio.gather(
-        run_http(),
-        trader.run(symbols),
-        heartbeat()
-    )
+    # Start all tasks
+    print("🚀 Starting async tasks...")
+    print("   1. HTTP Server")
+    print("   2. Trading Bot")
+    print("   3. Heartbeat Monitor")
+    print()
+    
+    try:
+        await asyncio.gather(
+            run_http(),
+            trader.run(symbols),
+            heartbeat()
+        )
+    except Exception as e:
+        print(f"\n❌ Fatal error in main: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
 
 
 if __name__ == "__main__":
     try:
+        print("=" * 80)
+        print("STARTING TRADING BOT APPLICATION")
+        print("=" * 80)
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\n\n🛑 Bot stopped by user")
     except Exception as e:
         print(f"\n\n❌ Fatal error: {e}")
+        import traceback
+        traceback.print_exc()
         raise
