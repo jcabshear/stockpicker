@@ -1,0 +1,298 @@
+# 📐 System Architecture - Auto Stock Selection
+
+```
+╔════════════════════════════════════════════════════════════════════════════╗
+║                        TRADING BOT WITH AUTO-SELECTION                      ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  📅 DAILY CYCLE (Repeats Every 24 Hours)                                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+    6:00 AM ET                    9:30 AM ET                4:00 PM ET
+       │                             │                          │
+       ▼                             ▼                          ▼
+  ┌─────────┐                  ┌─────────┐               ┌─────────┐
+  │ SCREEN  │──────────────────▶│  TRADE  │───────────────▶│  CLOSE  │
+  │ STOCKS  │                   │ STOCKS  │                │   DAY   │
+  └─────────┘                   └─────────┘                └─────────┘
+       │                             │                          │
+       │                             │                          │
+       └─────────────────────────────┴──────────────────────────┘
+                                     │
+                            Next day at 6 AM: Repeat
+
+
+╔════════════════════════════════════════════════════════════════════════════╗
+║  MORNING: STOCK SELECTION PROCESS (6:00 AM - 9:25 AM)                      ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+    ┌───────────────────────────────────────────────────────┐
+    │  INPUT: NASDAQ Stock Universe (~100 stocks)           │
+    │  [AAPL, MSFT, GOOGL, NVDA, TSLA, AMD, META, ...]     │
+    └───────────────────────────────────────────────────────┘
+                            │
+                            │ Fetch historical data
+                            ▼
+    ┌───────────────────────────────────────────────────────┐
+    │         MULTI-FACTOR SCORING ENGINE                   │
+    │         (stock_scorer.py)                             │
+    └───────────────────────────────────────────────────────┘
+                            │
+            ┌───────────────┼───────────────┐
+            │               │               │
+            ▼               ▼               ▼
+    ┌──────────┐    ┌──────────┐   ┌──────────┐   ┌──────────┐
+    │Technical │    │ Momentum │   │  Volume  │   │Volatility│
+    │ Analysis │    │ Analysis │   │ Analysis │   │ Analysis │
+    │ (40 pts) │    │ (25 pts) │   │ (20 pts) │   │ (15 pts) │
+    └──────────┘    └──────────┘   └──────────┘   └──────────┘
+         │               │               │              │
+         │  • RSI        │  • Gaps       │  • Volume    │  • ATR
+         │  • SMA        │  • Momentum   │    surge     │  • BB
+         │  • MACD       │  • Price      │  • Trend     │    position
+         │  • Trend      │    accel      │              │
+         │               │               │              │
+         └───────────────┴───────────────┴──────────────┘
+                            │
+                            │ Calculate total score
+                            ▼
+    ┌───────────────────────────────────────────────────────┐
+    │  SCORED STOCKS                                        │
+    │  NVDA: 89/100  ⭐⭐⭐⭐⭐                               │
+    │  TSLA: 82/100  ⭐⭐⭐⭐                                │
+    │  AMD:  80/100  ⭐⭐⭐⭐                                │
+    │  META: 75/100  ⭐⭐⭐⭐                                │
+    │  AAPL: 68/100  ⭐⭐⭐                                  │
+    │  MSFT: 45/100  ⭐⭐ (filtered out)                    │
+    └───────────────────────────────────────────────────────┘
+                            │
+                            │ Filter: Score ≥ 60
+                            ▼
+    ┌───────────────────────────────────────────────────────┐
+    │  QUALIFYING STOCKS (15 found)                         │
+    │  All stocks scoring 60 or higher                      │
+    └───────────────────────────────────────────────────────┘
+                            │
+                            │ Apply diversification
+                            │ (prefer different sectors)
+                            ▼
+    ┌───────────────────────────────────────────────────────┐
+    │  🏆 TOP 3 SELECTIONS                                  │
+    │  1. NVDA (Technology)                                 │
+    │  2. TSLA (Automotive)                                 │
+    │  3. AMD  (Technology)                                 │
+    └───────────────────────────────────────────────────────┘
+                            │
+                            │ Update trading symbols
+                            ▼
+    ┌───────────────────────────────────────────────────────┐
+    │  ✅ READY TO TRADE                                    │
+    │  Symbols updated: NVDA, TSLA, AMD                     │
+    │  Waiting for market open at 9:30 AM                   │
+    └───────────────────────────────────────────────────────┘
+
+
+╔════════════════════════════════════════════════════════════════════════════╗
+║  TRADING: INTRADAY EXECUTION (9:30 AM - 4:00 PM)                           ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+    ┌───────────────────────────────────────────────────────┐
+    │  SELECTED STOCKS: NVDA, TSLA, AMD                     │
+    └───────────────────────────────────────────────────────┘
+                            │
+                            │ Monitor real-time data
+                            ▼
+    ┌───────────────────────────────────────────────────────┐
+    │        SMA CROSSOVER STRATEGY                         │
+    │        (sma_crossover_strategy.py)                    │
+    │                                                       │
+    │  • Short SMA (5) crosses Long SMA (20)               │
+    │  • Volume confirmation (1.5x avg)                    │
+    │  • Generate BUY/SELL signals                         │
+    └───────────────────────────────────────────────────────┘
+                            │
+                ┌───────────┴───────────┐
+                │                       │
+                ▼                       ▼
+        ┌──────────────┐        ┌──────────────┐
+        │  BUY SIGNAL  │        │ SELL SIGNAL  │
+        │              │        │              │
+        │ • Bullish    │        │ • Bearish    │
+        │   crossover  │        │   crossover  │
+        │ • High volume│        │ • Stop loss  │
+        └──────────────┘        └──────────────┘
+                │                       │
+                │                       │
+                └───────────┬───────────┘
+                            │
+                            ▼
+    ┌───────────────────────────────────────────────────────┐
+    │         LIVE TRADER (live_trader.py)                  │
+    │                                                       │
+    │  • Execute orders via Alpaca                          │
+    │  • Manage positions                                   │
+    │  • Apply risk limits                                  │
+    │  • Track P&L                                          │
+    └───────────────────────────────────────────────────────┘
+                            │
+                            ▼
+    ┌───────────────────────────────────────────────────────┐
+    │  📊 ACTIVE TRADING                                    │
+    │  Open Positions: 2                                    │
+    │  Daily P&L: +$127.50                                  │
+    │  Total Trades: 8                                      │
+    │  Win Rate: 75%                                        │
+    └───────────────────────────────────────────────────────┘
+
+
+╔════════════════════════════════════════════════════════════════════════════╗
+║  MONITORING: REAL-TIME DASHBOARD & API                                     ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+    ┌─────────────────────────────────────────────────────────┐
+    │  🌐 WEB DASHBOARD (main_integrated.py)                  │
+    │                                                         │
+    │  ┌──────────────────────────────────────────────────┐  │
+    │  │  🤖 Trading Bot Dashboard                         │  │
+    │  │  ✅ Trading Enabled  🎯 Auto-Select              │  │
+    │  ├──────────────────────────────────────────────────┤  │
+    │  │  Current Symbols: NVDA, TSLA, AMD                │  │
+    │  │  🎯 Auto-selected daily (score ≥60)             │  │
+    │  ├──────────────────────────────────────────────────┤  │
+    │  │  Daily P&L    Total Trades    Win Rate          │  │
+    │  │  +$127.50          8            75%              │  │
+    │  ├──────────────────────────────────────────────────┤  │
+    │  │  Open Positions (2)                              │  │
+    │  │  NVDA: +$45.20 (+3.2%)                          │  │
+    │  │  TSLA: +$82.30 (+5.1%)                          │  │
+    │  └──────────────────────────────────────────────────┘  │
+    └─────────────────────────────────────────────────────────┘
+                            │
+                            │ Refresh every 10 seconds
+                            ▼
+    ┌─────────────────────────────────────────────────────────┐
+    │  📡 API ENDPOINTS                                       │
+    │                                                         │
+    │  GET  /              → Dashboard HTML                   │
+    │  GET  /health        → Bot status                       │
+    │  GET  /positions     → Current positions                │
+    │  GET  /stats         → Trading statistics               │
+    │  GET  /settings      → Current configuration            │
+    │  GET  /screen        → Trigger manual screening         │
+    │  POST /settings      → Update configuration             │
+    │  POST /kill          → Emergency stop                   │
+    └─────────────────────────────────────────────────────────┘
+
+
+╔════════════════════════════════════════════════════════════════════════════╗
+║  SYSTEM COMPONENTS & RESPONSIBILITIES                                       ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+┌────────────────────────────────────────────────────────────────────────┐
+│  FILE                     │  PURPOSE                                   │
+├────────────────────────────────────────────────────────────────────────┤
+│  stock_scorer.py          │  Multi-factor scoring engine               │
+│                           │  • Calculate RSI, MACD, ATR, etc.         │
+│                           │  • Score each stock 0-100                 │
+│                           │  • Generate detailed breakdowns           │
+├────────────────────────────────────────────────────────────────────────┤
+│  daily_selector.py        │  Daily stock selection automation         │
+│                           │  • Manage stock universe                  │
+│                           │  • Run screening at 6 AM daily            │
+│                           │  • Select top 3 with diversification      │
+│                           │  • Update trading symbols                 │
+├────────────────────────────────────────────────────────────────────────┤
+│  main_integrated.py       │  Main application & API server            │
+│                           │  • Integrate auto-selection               │
+│                           │  • Serve web dashboard                    │
+│                           │  • Handle API requests                    │
+│                           │  • Coordinate all components              │
+├────────────────────────────────────────────────────────────────────────┤
+│  sma_crossover_strategy.py│  Trading strategy (existing)              │
+│                           │  • Generate BUY/SELL signals              │
+│                           │  • SMA crossover logic                    │
+│                           │  • Exit conditions                        │
+├────────────────────────────────────────────────────────────────────────┤
+│  live_trader.py           │  Trade execution engine (existing)        │
+│                           │  • Connect to Alpaca                      │
+│                           │  • Execute orders                         │
+│                           │  • Manage positions                       │
+│                           │  • Risk management                        │
+├────────────────────────────────────────────────────────────────────────┤
+│  config.py                │  Configuration management                 │
+│                           │  • Load environment variables             │
+│                           │  • Store settings                         │
+│                           │  • Validate credentials                   │
+└────────────────────────────────────────────────────────────────────────┘
+
+
+╔════════════════════════════════════════════════════════════════════════════╗
+║  DATA FLOW DIAGRAM                                                          ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+                    ┌──────────────────┐
+                    │  Alpaca Markets  │
+                    │  (Data Provider) │
+                    └────────┬─────────┘
+                             │
+              ┌──────────────┼──────────────┐
+              │              │              │
+              ▼              ▼              ▼
+    ┌─────────────┐  ┌─────────────┐  ┌─────────────┐
+    │  Historical │  │  Real-time  │  │   Account   │
+    │    Bars     │  │    Bars     │  │    Data     │
+    │  (Daily)    │  │  (1-min)    │  │  (Balance)  │
+    └──────┬──────┘  └──────┬──────┘  └──────┬──────┘
+           │                │                │
+           ▼                │                ▼
+    ┌─────────────┐         │         ┌─────────────┐
+    │   Scoring   │         │         │    Risk     │
+    │   Engine    │         │         │  Management │
+    └──────┬──────┘         │         └──────┬──────┘
+           │                │                │
+           ▼                ▼                ▼
+    ┌──────────────────────────────────────────┐
+    │        Trading Decision Logic            │
+    │  (Strategy + Scoring + Risk)             │
+    └──────────────────┬───────────────────────┘
+                       │
+                       ▼
+            ┌──────────────────┐
+            │  Execute Trades  │
+            │  via Alpaca API  │
+            └──────────────────┘
+
+
+╔════════════════════════════════════════════════════════════════════════════╗
+║  KEY INNOVATION: ADAPTIVE STOCK SELECTION                                   ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+BEFORE (Static):                    AFTER (Dynamic):
+┌──────────────────┐               ┌──────────────────┐
+│  Trade AAPL,     │               │  Day 1: NVDA,    │
+│  MSFT, GOOGL     │               │  TSLA, AMD       │
+│                  │               ├──────────────────┤
+│  Every day,      │               │  Day 2: META,    │
+│  Same stocks     │               │  GOOGL, AVGO     │
+│                  │               ├──────────────────┤
+│  Miss moves in   │               │  Day 3: COIN,    │
+│  other sectors   │      VS       │  CRWD, SNOW      │
+│                  │               ├──────────────────┤
+│  Manual picks    │               │  Adapts to       │
+│  based on gut    │               │  market daily    │
+│  feeling         │               │                  │
+│                  │               │  Quantitative    │
+│                  │               │  analysis        │
+└──────────────────┘               └──────────────────┘
+
+
+═══════════════════════════════════════════════════════════════════════════
+
+                        🎯 YOUR BOT IS NOW INTELLIGENT!
+
+                   It automatically finds and trades the best
+                      opportunities across the entire NASDAQ
+
+═══════════════════════════════════════════════════════════════════════════
+```

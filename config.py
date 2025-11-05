@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     feed: str = os.getenv('FEED', 'iex')
     symbols: str = os.getenv('SYMBOLS', 'AAPL,MSFT,GOOGL')
     
+    # Auto stock selection
+    auto_select_stocks: bool = os.getenv('AUTO_SELECT_STOCKS', 'true').lower() == 'true'
+    min_stock_score: float = float(os.getenv('MIN_STOCK_SCORE', '60'))
+    
     # Strategy parameters
     short_window: int = int(os.getenv('SHORT_WINDOW', '5'))
     long_window: int = int(os.getenv('LONG_WINDOW', '20'))
