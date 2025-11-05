@@ -6,6 +6,7 @@ Uses separate strategy and trader components
 import os
 import asyncio
 from typing import Optional
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 import uvicorn
 
@@ -15,11 +16,103 @@ from config import settings
 
 
 # ============================================================================
+# GLOBAL STATE
+# ============================================================================
+
+trader: Optional[LiveTrader] = None
+trading_task: Optional[asyncio.Task] = None
+heartbeat_task: Optional[asyncio.Task] = None
+
+
+# ============================================================================
+# LIFESPAN CONTEXT MANAGER
+# ============================================================================
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Manage startup and shutdown"""
+    global trader, trading_task, heartbeat_task
+    
+    print("\n" + "="*80)
+    print("🚀 INITIALIZING TRADING BOT")
+    print("="*80)
+    
+    # Parse symbols
+    symbols = settings.symbols
+    if isinstance(symbols, str):
+        symbols = [s.strip() for s in symbols.split(',')]
+    
+    port = int(os.getenv('PORT', 10000))
+    
+    print(f"📋 Configuration:")
+    print(f"   Mode: {'PAPER' if settings.paper else 'LIVE'}")
+    print(f"   Trading: {'ENABLED' if settings.allow_trading else 'DISABLED'}")
+    print(f"   Symbols: {', '.join(symbols)}")
+    print(f"   Data Feed: {settings.feed.upper()}")
+    print(f"   Max Position: ${settings.max_usd_per_order}")
+    print(f"   Max Daily Loss: ${settings.max_daily_loss}")
+    print(f"   Strategy: SMA Crossover ({settings.short_window}/{settings.long_window})")
+    print(f"   API Port: {port}")
+    print("="*80 + "\n")
+    
+    # Create strategy
+    print("📊 Creating strategy...")
+    strategy = SMACrossoverStrategy(
+        short_window=settings.short_window,
+        long_window=settings.long_window,
+        volume_threshold=settings.volume_threshold,
+        stop_loss_pct=settings.stop_loss_pct
+    )
+    print(f"✅ Strategy created: {strategy.name}")
+    
+    # Create trader
+    print("🤖 Creating trader...")
+    trader = LiveTrader(strategy)
+    print("✅ Trader created")
+    
+    print("\n✅ Bot initialized successfully")
+    print(f"🌐 API available at http://0.0.0.0:{port}")
+    print(f"📊 Health check: http://0.0.0.0:{port}/health\n")
+    
+    # Start background tasks
+    print("🚀 Starting background tasks...")
+    trading_task = asyncio.create_task(trader.run(symbols))
+    heartbeat_task = asyncio.create_task(heartbeat())
+    print("✅ Background tasks started\n")
+    
+    # Let the app run
+    yield
+    
+    # Cleanup on shutdown
+    print("\n🛑 Shutting down...")
+    if trading_task:
+        trading_task.cancel()
+    if heartbeat_task:
+        heartbeat_task.cancel()
+    print("✅ Shutdown complete")
+
+
+# ============================================================================
 # FASTAPI APP FOR MONITORING
 # ============================================================================
 
-app = FastAPI(title="Trading Bot API")
-trader: Optional[LiveTrader] = None
+app = FastAPI(title="Trading Bot API", lifespan=lifespan)
+
+
+@app.get("/")
+def root():
+    """API root"""
+    return {
+        "app": "Trading Bot",
+        "version": "2.0",
+        "mode": "paper" if settings.paper else "live",
+        "endpoints": {
+            "health": "/health",
+            "positions": "/positions",
+            "stats": "/stats",
+            "kill": "POST /kill?token=<your-token>"
+        }
+    }
 
 
 @app.get("/health")
@@ -81,7 +174,6 @@ def get_stats():
 @app.post("/kill")
 def kill(token: str):
     """Emergency stop"""
-    # Get kill token from environment, default to hardcoded value
     kill_token = os.getenv('KILL_TOKEN', 'let-me-in')
     
     if token != kill_token:
@@ -94,46 +186,14 @@ def kill(token: str):
     return {"ok": True, "message": "Trading disabled"}
 
 
-@app.get("/")
-def root():
-    """API root"""
-    return {
-        "app": "Trading Bot",
-        "version": "2.0",
-        "mode": "paper" if settings.paper else "live",
-        "endpoints": {
-            "health": "/health",
-            "positions": "/positions",
-            "stats": "/stats",
-            "kill": "POST /kill?token=<your-token>"
-        }
-    }
-
-
 # ============================================================================
-# ASYNC TASKS
+# HEARTBEAT TASK
 # ============================================================================
-
-async def run_http():
-    """Run FastAPI server"""
-    # Use PORT from environment (Render provides this), default to 10000
-    port = int(os.getenv('PORT', 10000))
-    
-    config = uvicorn.Config(
-        app, 
-        host="0.0.0.0", 
-        port=port, 
-        log_level="info"
-    )
-    server = uvicorn.Server(config)
-    print(f"🌐 Starting HTTP server on port {port}...")
-    await server.serve()
-
 
 async def heartbeat():
     """Periodic heartbeat"""
     print("💓 Heartbeat task started")
-    await asyncio.sleep(5)  # Wait a bit for everything to initialize
+    await asyncio.sleep(5)  # Wait for initialization
     
     while True:
         try:
@@ -149,7 +209,7 @@ async def heartbeat():
                     f"Daily P&L: ${trader.daily_pnl:.2f}"
                 )
             else:
-                print("💓 Heartbeat: Trader not initialized yet")
+                print("💓 Heartbeat: Waiting for trader initialization...")
         except Exception as e:
             print(f"❌ Error in heartbeat: {e}")
         
@@ -160,81 +220,16 @@ async def heartbeat():
 # MAIN ENTRY POINT
 # ============================================================================
 
-async def main():
-    global trader
-    
-    print("\n" + "="*80)
-    print("🚀 INITIALIZING TRADING BOT")
-    print("="*80)
-    
-    # Parse symbols
-    symbols = settings.symbols
-    if isinstance(symbols, str):
-        symbols = [s.strip() for s in symbols.split(',')]
-    
-    # Get port for display
+if __name__ == "__main__":
     port = int(os.getenv('PORT', 10000))
     
-    print(f"📋 Configuration:")
-    print(f"   Mode: {'PAPER' if settings.paper else 'LIVE'}")
-    print(f"   Trading: {'ENABLED' if settings.allow_trading else 'DISABLED'}")
-    print(f"   Symbols: {', '.join(symbols)}")
-    print(f"   Data Feed: {settings.feed.upper()}")
-    print(f"   Max Position: ${settings.max_usd_per_order}")
-    print(f"   Max Daily Loss: ${settings.max_daily_loss}")
-    print(f"   Strategy: SMA Crossover ({settings.short_window}/{settings.long_window})")
-    print(f"   API Port: {port}")
-    print("="*80 + "\n")
+    print("=" * 80)
+    print("STARTING TRADING BOT APPLICATION")
+    print("=" * 80)
     
-    # Create strategy
-    print("📊 Creating strategy...")
-    strategy = SMACrossoverStrategy(
-        short_window=settings.short_window,
-        long_window=settings.long_window,
-        volume_threshold=settings.volume_threshold,
-        stop_loss_pct=settings.stop_loss_pct
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=port,
+        log_level="info"
     )
-    print(f"✅ Strategy created: {strategy.name}")
-    
-    # Create trader
-    print("🤖 Creating trader...")
-    trader = LiveTrader(strategy)
-    print("✅ Trader created")
-    
-    print("\n✅ Bot initialized successfully")
-    print(f"🌐 API available at http://0.0.0.0:{port}")
-    print(f"📊 Health check: http://0.0.0.0:{port}/health\n")
-    
-    # Start all tasks
-    print("🚀 Starting async tasks...")
-    print("   1. HTTP Server")
-    print("   2. Trading Bot")
-    print("   3. Heartbeat Monitor")
-    print()
-    
-    try:
-        await asyncio.gather(
-            run_http(),
-            trader.run(symbols),
-            heartbeat()
-        )
-    except Exception as e:
-        print(f"\n❌ Fatal error in main: {e}")
-        import traceback
-        traceback.print_exc()
-        raise
-
-
-if __name__ == "__main__":
-    try:
-        print("=" * 80)
-        print("STARTING TRADING BOT APPLICATION")
-        print("=" * 80)
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("\n\n🛑 Bot stopped by user")
-    except Exception as e:
-        print(f"\n\n❌ Fatal error: {e}")
-        import traceback
-        traceback.print_exc()
-        raise
