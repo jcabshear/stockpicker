@@ -273,15 +273,19 @@ class LiveTrader:
                     stream.subscribe_bars(self.handle_bar, symbol.strip())
                 
                 print(f"📡 Subscribed to {len(symbols)} symbols on {feed.name}")
-                await stream.run()
+                print(f"🔌 Connecting to Alpaca data stream...")
                 
-                # Reset retry delay on successful connection
-                retry_delay = 5
+                # FIXED: Properly await the stream
+                await stream._run_forever()
             
+            except KeyboardInterrupt:
+                print("\n🛑 Shutting down gracefully...")
+                break
             except Exception as e:
                 print(f"❌ Stream error: {e}")
-                print(f"Reconnecting in {retry_delay} seconds...")
+                print(f"🔄 Reconnecting in {retry_delay} seconds...")
                 
-                # Exponential backoff (moved before await)
-                retry_delay = min(retry_delay * 2, max_retry_delay)
                 await asyncio.sleep(retry_delay)
+                
+                # Exponential backoff
+                retry_delay = min(retry_delay * 2, max_retry_delay)
