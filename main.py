@@ -5,8 +5,8 @@ Uses separate strategy and trader components
 
 import os
 import asyncio
+import logging
 from typing import Optional
-from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 import uvicorn
 
@@ -14,6 +14,12 @@ from sma_crossover_strategy import SMACrossoverStrategy
 from live_trader import LiveTrader
 from config import settings
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # ============================================================================
 # GLOBAL STATE
@@ -25,17 +31,21 @@ heartbeat_task: Optional[asyncio.Task] = None
 
 
 # ============================================================================
-# LIFESPAN CONTEXT MANAGER
+# FASTAPI APP
 # ============================================================================
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Manage startup and shutdown"""
+app = FastAPI(title="Trading Bot API")
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize bot on startup"""
     global trader, trading_task, heartbeat_task
     
     print("\n" + "="*80)
     print("🚀 INITIALIZING TRADING BOT")
     print("="*80)
+    logger.info("Starting bot initialization...")
     
     # Parse symbols
     symbols = settings.symbols
@@ -64,11 +74,13 @@ async def lifespan(app: FastAPI):
         stop_loss_pct=settings.stop_loss_pct
     )
     print(f"✅ Strategy created: {strategy.name}")
+    logger.info(f"Strategy created: {strategy.name}")
     
     # Create trader
     print("🤖 Creating trader...")
     trader = LiveTrader(strategy)
     print("✅ Trader created")
+    logger.info("Trader initialized")
     
     print("\n✅ Bot initialized successfully")
     print(f"🌐 API available at http://0.0.0.0:{port}")
@@ -76,27 +88,33 @@ async def lifespan(app: FastAPI):
     
     # Start background tasks
     print("🚀 Starting background tasks...")
+    logger.info("Starting background tasks...")
+    
     trading_task = asyncio.create_task(trader.run(symbols))
     heartbeat_task = asyncio.create_task(heartbeat())
+    
     print("✅ Background tasks started\n")
+    logger.info("All background tasks running")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup on shutdown"""
+    global trading_task, heartbeat_task
     
-    # Let the app run
-    yield
-    
-    # Cleanup on shutdown
     print("\n🛑 Shutting down...")
+    logger.info("Initiating shutdown...")
+    
     if trading_task:
         trading_task.cancel()
+        logger.info("Trading task cancelled")
+    
     if heartbeat_task:
         heartbeat_task.cancel()
+        logger.info("Heartbeat task cancelled")
+    
     print("✅ Shutdown complete")
-
-
-# ============================================================================
-# FASTAPI APP FOR MONITORING
-# ============================================================================
-
-app = FastAPI(title="Trading Bot API", lifespan=lifespan)
+    logger.info("Shutdown complete")
 
 
 @app.get("/")
@@ -106,6 +124,7 @@ def root():
         "app": "Trading Bot",
         "version": "2.0",
         "mode": "paper" if settings.paper else "live",
+        "status": "running" if trader else "initializing",
         "endpoints": {
             "health": "/health",
             "positions": "/positions",
@@ -118,14 +137,20 @@ def root():
 @app.get("/health")
 def health():
     """Health check endpoint"""
+    if not trader:
+        return {
+            "status": "initializing",
+            "message": "Bot is starting up..."
+        }
+    
     return {
         "status": "running",
-        "strategy": trader.strategy.name if trader else None,
-        "trading_enabled": trader.allow_trading if trader else False,
-        "daily_pnl": trader.daily_pnl if trader else 0,
-        "positions": len(trader.positions) if trader else 0,
-        "total_trades": trader.total_trades if trader else 0,
-        "market_open": trader.is_market_open() if trader else False
+        "strategy": trader.strategy.name,
+        "trading_enabled": trader.allow_trading,
+        "daily_pnl": trader.daily_pnl,
+        "positions": len(trader.positions),
+        "total_trades": trader.total_trades,
+        "market_open": trader.is_market_open()
     }
 
 
@@ -133,7 +158,7 @@ def health():
 def get_positions():
     """Get current positions"""
     if not trader:
-        return {"positions": []}
+        return {"positions": [], "message": "Bot initializing..."}
     
     return {
         "positions": [
@@ -155,7 +180,7 @@ def get_positions():
 def get_stats():
     """Get trading stats"""
     if not trader:
-        return {}
+        return {"message": "Bot initializing..."}
     
     win_rate = (trader.winning_trades / trader.total_trades * 100) if trader.total_trades > 0 else 0
     
@@ -181,6 +206,7 @@ def kill(token: str):
     
     if trader:
         trader.allow_trading = False
+        logger.warning("EMERGENCY STOP: Trading disabled via API")
         print("🚨 EMERGENCY STOP: Trading disabled via API")
     
     return {"ok": True, "message": "Trading disabled"}
@@ -193,6 +219,7 @@ def kill(token: str):
 async def heartbeat():
     """Periodic heartbeat"""
     print("💓 Heartbeat task started")
+    logger.info("Heartbeat task started")
     await asyncio.sleep(5)  # Wait for initialization
     
     while True:
@@ -200,7 +227,7 @@ async def heartbeat():
             if trader:
                 win_rate = (trader.winning_trades / trader.total_trades * 100) if trader.total_trades > 0 else 0
                 market_status = "🟢 OPEN" if trader.is_market_open() else "🔴 CLOSED"
-                print(
+                message = (
                     f"💓 Bot alive | "
                     f"Market: {market_status} | "
                     f"Positions: {len(trader.positions)} | "
@@ -208,10 +235,15 @@ async def heartbeat():
                     f"Win Rate: {win_rate:.1f}% | "
                     f"Daily P&L: ${trader.daily_pnl:.2f}"
                 )
+                print(message)
+                logger.info(message)
             else:
                 print("💓 Heartbeat: Waiting for trader initialization...")
+                logger.info("Heartbeat: Trader not initialized yet")
         except Exception as e:
-            print(f"❌ Error in heartbeat: {e}")
+            error_msg = f"Error in heartbeat: {e}"
+            print(f"❌ {error_msg}")
+            logger.error(error_msg)
         
         await asyncio.sleep(60)
 
@@ -226,10 +258,15 @@ if __name__ == "__main__":
     print("=" * 80)
     print("STARTING TRADING BOT APPLICATION")
     print("=" * 80)
+    logger.info(f"Starting application on port {port}")
     
-    uvicorn.run(
-        app,
-        host="0.0.0.0",
-        port=port,
-        log_level="info"
-    )
+    try:
+        uvicorn.run(
+            app,
+            host="0.0.0.0",
+            port=port,
+            log_level="info"
+        )
+    except Exception as e:
+        logger.error(f"Failed to start application: {e}")
+        raise
