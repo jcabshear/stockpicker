@@ -259,8 +259,10 @@ class LiveTrader:
         
         retry_delay = 5
         max_retry_delay = 300  # 5 minutes
+        retry_count = 0
+        max_retries = 10  # Give up after 10 attempts
         
-        while True:
+        while retry_count < max_retries:
             try:
                 stream = StockDataStream(
                     settings.alpaca_key,
@@ -273,7 +275,11 @@ class LiveTrader:
                     stream.subscribe_bars(self.handle_bar, symbol.strip())
                 
                 print(f"📡 Subscribed to {len(symbols)} symbols on {feed.name}")
-                print(f"🔌 Connecting to Alpaca data stream...")
+                print(f"🔌 Connecting to Alpaca data stream (attempt {retry_count + 1}/{max_retries})...")
+                
+                # Reset retry count on successful connection
+                retry_count = 0
+                retry_delay = 5
                 
                 # FIXED: Properly await the stream
                 await stream._run_forever()
@@ -281,11 +287,43 @@ class LiveTrader:
             except KeyboardInterrupt:
                 print("\n🛑 Shutting down gracefully...")
                 break
+            except ValueError as e:
+                if "connection limit exceeded" in str(e):
+                    retry_count += 1
+                    print(f"\n{'='*80}")
+                    print(f"❌ CONNECTION LIMIT EXCEEDED (attempt {retry_count}/{max_retries})")
+                    print(f"{'='*80}")
+                    print(f"💡 Alpaca allows only 1 WebSocket connection at a time.")
+                    print(f"   You likely have another instance or session still connected.")
+                    print(f"\n📋 To fix this:")
+                    print(f"   1. Visit: https://app.alpaca.markets/paper/dashboard")
+                    print(f"   2. Log out and log back in (forces disconnect)")
+                    print(f"   3. Or wait 5-10 minutes for timeout")
+                    print(f"   4. Then resume this service")
+                    print(f"\n🔄 Will retry in {retry_delay} seconds...")
+                    print(f"{'='*80}\n")
+                    
+                    await asyncio.sleep(retry_delay)
+                    retry_delay = min(retry_delay * 2, max_retry_delay)
+                else:
+                    print(f"❌ Stream error: {e}")
+                    break
             except Exception as e:
                 print(f"❌ Stream error: {e}")
                 print(f"🔄 Reconnecting in {retry_delay} seconds...")
                 
                 await asyncio.sleep(retry_delay)
-                
-                # Exponential backoff
                 retry_delay = min(retry_delay * 2, max_retry_delay)
+                retry_count += 1
+        
+        if retry_count >= max_retries:
+            print("\n" + "="*80)
+            print("🚨 FATAL: Could not connect after maximum retries")
+            print("="*80)
+            print("❌ Unable to establish WebSocket connection to Alpaca")
+            print("\n📋 Please:")
+            print("   1. Go to https://app.alpaca.markets/")
+            print("   2. Log out completely")
+            print("   3. Wait 10 minutes")
+            print("   4. Redeploy this service on Render")
+            print("="*80 + "\n")
