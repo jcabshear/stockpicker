@@ -1,5 +1,5 @@
 services:
-  - type: worker
+  - type: web
     name: stockpicker
     runtime: python
     env: python
@@ -25,7 +25,7 @@ services:
       - key: FEED
         value: "iex"
       - key: SYMBOLS
-        value: "AAPL,MSFT,GOOGL"
+        value: "AAPL,MSFT,GOOGL,NVDA,TSLA"
       - key: SHORT_WINDOW
         value: "5"
       - key: LONG_WINDOW
