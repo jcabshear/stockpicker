@@ -281,7 +281,7 @@ class LiveTrader:
             except Exception as e:
                 print(f"❌ Stream error: {e}")
                 print(f"Reconnecting in {retry_delay} seconds...")
-                await asyncio.sleep(retry_delay)
                 
-                # Exponential backoff
+                # Exponential backoff (moved before await)
                 retry_delay = min(retry_delay * 2, max_retry_delay)
+                await asyncio.sleep(retry_delay)
