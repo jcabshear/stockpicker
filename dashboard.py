@@ -471,6 +471,7 @@ MAIN_DASHBOARD_HTML = """
                     </div>
                     <span id="statusBadge" class="status-badge">Loading...</span>
                     <span id="autoSelectBadge" class="status-badge status-auto" style="display:none;">Auto-Select</span>
+                    <a href="/backtest" class="settings-btn">📊 Backtest</a>
                     <a href="/settings" class="settings-btn">⚙️ Settings</a>
                 </div>
             </div>
@@ -1052,6 +1053,530 @@ SETTINGS_PAGE_HTML = """
         });
         
         loadSettings();
+    </script>
+</body>
+</html>
+"""
+
+BACKTEST_PAGE_HTML = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Backtest - Trading Dashboard</title>
+    <style>
+        * { 
+            margin: 0; 
+            padding: 0; 
+            box-sizing: border-box; 
+        }
+        
+        body {
+            font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #1a1a2e;
+            min-height: 100vh;
+            padding: 0;
+        }
+        
+        .container { 
+            max-width: 1200px; 
+            margin: 0 auto;
+            padding: 0;
+        }
+        
+        /* Header */
+        .header {
+            background: rgba(255, 255, 255, 0.98);
+            backdrop-filter: blur(20px);
+            border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+            padding: 24px 40px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+        }
+        
+        .header-content {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .back-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 20px;
+            background: rgba(102, 126, 234, 0.1);
+            color: #667eea;
+            border: 1px solid rgba(102, 126, 234, 0.3);
+            border-radius: 20px;
+            font-weight: 600;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-decoration: none;
+        }
+        
+        .back-btn:hover {
+            background: rgba(102, 126, 234, 0.2);
+            transform: translateX(-2px);
+        }
+        
+        h1 {
+            font-size: 28px;
+            font-weight: 700;
+            color: #1a1a2e;
+        }
+        
+        /* Main Content */
+        .main-content {
+            padding: 32px 40px;
+        }
+        
+        .section {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 16px;
+            padding: 32px;
+            box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+            border: 1px solid rgba(0, 0, 0, 0.06);
+            margin-bottom: 20px;
+        }
+        
+        .section-title {
+            font-size: 20px;
+            font-weight: 700;
+            color: #1a1a2e;
+            margin-bottom: 20px;
+            padding-bottom: 12px;
+            border-bottom: 2px solid #f3f4f6;
+        }
+        
+        .form-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .form-group {
+            margin-bottom: 0;
+        }
+        
+        .form-label {
+            display: block;
+            font-size: 14px;
+            font-weight: 600;
+            color: #374151;
+            margin-bottom: 8px;
+        }
+        
+        .form-help {
+            font-size: 13px;
+            color: #6b7280;
+            margin-top: 4px;
+        }
+        
+        .form-input {
+            width: 100%;
+            padding: 12px 16px;
+            font-size: 14px;
+            border: 2px solid #e5e7eb;
+            border-radius: 12px;
+            transition: all 0.3s;
+            font-family: inherit;
+        }
+        
+        .form-input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        
+        .btn-primary {
+            display: inline-block;
+            padding: 14px 32px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-weight: 600;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 16px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn-primary:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .loading-message {
+            background: #dbeafe;
+            color: #1e40af;
+            padding: 16px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            display: none;
+        }
+        
+        .error-message {
+            background: #fee2e2;
+            color: #991b1b;
+            padding: 16px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            display: none;
+        }
+        
+        /* Results Section */
+        .results-section {
+            display: none;
+        }
+        
+        .results-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        
+        .result-card {
+            background: #f9fafb;
+            padding: 20px;
+            border-radius: 12px;
+            border: 1px solid #e5e7eb;
+        }
+        
+        .result-label {
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            color: #6b7280;
+            font-weight: 600;
+            margin-bottom: 6px;
+        }
+        
+        .result-value {
+            font-size: 28px;
+            font-weight: 700;
+            color: #1a1a2e;
+        }
+        
+        .result-value.positive { color: #10b981; }
+        .result-value.negative { color: #ef4444; }
+        
+        .trades-table {
+            margin-top: 24px;
+            overflow-x: auto;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+        }
+        
+        thead {
+            background: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%);
+        }
+        
+        th {
+            text-align: left;
+            padding: 12px 16px;
+            color: #6b7280;
+            font-weight: 600;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            border-bottom: 2px solid #e5e7eb;
+        }
+        
+        th:first-child { border-radius: 12px 0 0 0; }
+        th:last-child { border-radius: 0 12px 0 0; }
+        
+        td {
+            padding: 12px 16px;
+            border-bottom: 1px solid #f3f4f6;
+            font-size: 14px;
+            color: #374151;
+        }
+        
+        tbody tr:hover {
+            background: #f9fafb;
+        }
+        
+        .positive { color: #10b981; font-weight: 600; }
+        .negative { color: #ef4444; font-weight: 600; }
+        
+        /* Responsive */
+        @media (max-width: 768px) {
+            .form-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .results-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .main-content {
+                padding: 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="header-content">
+                <h1>📊 Backtest Strategy</h1>
+                <a href="/" class="back-btn">← Back to Dashboard</a>
+            </div>
+        </div>
+        
+        <div class="main-content">
+            <div id="loadingMessage" class="loading-message"></div>
+            <div id="errorMessage" class="error-message"></div>
+            
+            <!-- Backtest Form -->
+            <form id="backtestForm">
+                <div class="section">
+                    <h2 class="section-title">Strategy Parameters</h2>
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label class="form-label">Short SMA Window</label>
+                            <input type="number" class="form-input" id="shortWindow" min="2" max="50" value="5" required>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label class="form-label">Long SMA Window</label>
+                            <input type="number" class="form-input" id="longWindow" min="5" max="200" value="20" required>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label class="form-label">Volume Threshold</label>
+                            <input type="number" class="form-input" id="volumeThreshold" min="1" max="5" step="0.1" value="1.5" required>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label class="form-label">Stop Loss %</label>
+                            <input type="number" class="form-input" id="stopLossPct" min="0.01" max="0.5" step="0.01" value="0.02" required>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="section">
+                    <h2 class="section-title">Backtest Parameters</h2>
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label class="form-label">Trading Symbols</label>
+                            <input type="text" class="form-input" id="symbols" value="AAPL,MSFT,GOOGL" required>
+                            <div class="form-help">Comma-separated list</div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label class="form-label">Days to Test</label>
+                            <input type="number" class="form-input" id="daysToTest" min="1" max="365" value="30" required>
+                            <div class="form-help">Number of days to backtest</div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label class="form-label">Initial Capital</label>
+                            <input type="number" class="form-input" id="initialCapital" min="1000" max="1000000" value="10000" required>
+                            <div class="form-help">Starting portfolio value</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <button type="submit" class="btn-primary" id="runBtn">Run Backtest</button>
+            </form>
+            
+            <!-- Results Section -->
+            <div id="resultsSection" class="results-section">
+                <div class="section">
+                    <h2 class="section-title">Backtest Results</h2>
+                    
+                    <div class="results-grid">
+                        <div class="result-card">
+                            <div class="result-label">Total Return</div>
+                            <div class="result-value" id="totalReturn">--</div>
+                        </div>
+                        <div class="result-card">
+                            <div class="result-label">Final Value</div>
+                            <div class="result-value" id="finalValue">--</div>
+                        </div>
+                        <div class="result-card">
+                            <div class="result-label">Total Trades</div>
+                            <div class="result-value" id="totalTrades">--</div>
+                        </div>
+                        <div class="result-card">
+                            <div class="result-label">Win Rate</div>
+                            <div class="result-value" id="winRate">--</div>
+                        </div>
+                        <div class="result-card">
+                            <div class="result-label">Profit Factor</div>
+                            <div class="result-value" id="profitFactor">--</div>
+                        </div>
+                        <div class="result-card">
+                            <div class="result-label">Sharpe Ratio</div>
+                            <div class="result-value" id="sharpeRatio">--</div>
+                        </div>
+                        <div class="result-card">
+                            <div class="result-label">Max Drawdown</div>
+                            <div class="result-value negative" id="maxDrawdown">--</div>
+                        </div>
+                        <div class="result-card">
+                            <div class="result-label">Avg Win</div>
+                            <div class="result-value positive" id="avgWin">--</div>
+                        </div>
+                        <div class="result-card">
+                            <div class="result-label">Avg Loss</div>
+                            <div class="result-value negative" id="avgLoss">--</div>
+                        </div>
+                    </div>
+                    
+                    <div class="trades-table">
+                        <h3 style="margin-bottom: 16px; color: #1a1a2e;">Trade History</h3>
+                        <div id="tradesContent"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        document.getElementById('backtestForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const runBtn = document.getElementById('runBtn');
+            const loadingMsg = document.getElementById('loadingMessage');
+            const errorMsg = document.getElementById('errorMessage');
+            const resultsSection = document.getElementById('resultsSection');
+            
+            // Hide previous results and errors
+            resultsSection.style.display = 'none';
+            errorMsg.style.display = 'none';
+            
+            // Show loading
+            runBtn.disabled = true;
+            runBtn.textContent = 'Running Backtest...';
+            loadingMsg.textContent = 'Running backtest... This may take 30-60 seconds.';
+            loadingMsg.style.display = 'block';
+            
+            const params = {
+                short_window: parseInt(document.getElementById('shortWindow').value),
+                long_window: parseInt(document.getElementById('longWindow').value),
+                volume_threshold: parseFloat(document.getElementById('volumeThreshold').value),
+                stop_loss_pct: parseFloat(document.getElementById('stopLossPct').value),
+                symbols: document.getElementById('symbols').value,
+                days: parseInt(document.getElementById('daysToTest').value),
+                initial_capital: parseFloat(document.getElementById('initialCapital').value)
+            };
+            
+            try {
+                const response = await fetch('/api/backtest', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(params)
+                });
+                
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Backtest failed');
+                }
+                
+                const results = await response.json();
+                displayResults(results);
+                
+                loadingMsg.style.display = 'none';
+                resultsSection.style.display = 'block';
+                
+                // Scroll to results
+                resultsSection.scrollIntoView({ behavior: 'smooth' });
+                
+            } catch (error) {
+                console.error('Error:', error);
+                errorMsg.textContent = '❌ ' + error.message;
+                errorMsg.style.display = 'block';
+                loadingMsg.style.display = 'none';
+            } finally {
+                runBtn.disabled = false;
+                runBtn.textContent = 'Run Backtest';
+            }
+        });
+        
+        function displayResults(results) {
+            // Update result cards
+            const totalReturnEl = document.getElementById('totalReturn');
+            totalReturnEl.textContent = results.total_return_pct.toFixed(2) + '%';
+            totalReturnEl.className = 'result-value ' + (results.total_return_pct >= 0 ? 'positive' : 'negative');
+            
+            document.getElementById('finalValue').textContent = '$' + results.final_value.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+            document.getElementById('totalTrades').textContent = results.total_trades;
+            document.getElementById('winRate').textContent = (results.win_rate * 100).toFixed(1) + '%';
+            
+            const pfEl = document.getElementById('profitFactor');
+            pfEl.textContent = results.profit_factor.toFixed(2);
+            pfEl.className = 'result-value ' + (results.profit_factor >= 1 ? 'positive' : 'negative');
+            
+            const srEl = document.getElementById('sharpeRatio');
+            srEl.textContent = results.sharpe_ratio.toFixed(2);
+            srEl.className = 'result-value ' + (results.sharpe_ratio >= 1 ? 'positive' : 'negative');
+            
+            document.getElementById('maxDrawdown').textContent = results.max_drawdown_pct.toFixed(2) + '%';
+            document.getElementById('avgWin').textContent = '$' + results.avg_win.toFixed(2);
+            document.getElementById('avgLoss').textContent = '$' + results.avg_loss.toFixed(2);
+            
+            // Display trades table
+            const tradesContent = document.getElementById('tradesContent');
+            if (results.trades && results.trades.length > 0) {
+                let tableHTML = '<table><thead><tr><th>Symbol</th><th>Action</th><th>Shares</th><th>Price</th><th>P&L</th><th>P&L %</th><th>Timestamp</th></tr></thead><tbody>';
+                
+                results.trades.forEach(trade => {
+                    if (trade.action === 'close') {
+                        const pnlClass = trade.pnl >= 0 ? 'positive' : 'negative';
+                        tableHTML += `<tr>
+                            <td><strong>${trade.symbol}</strong></td>
+                            <td>${trade.action.toUpperCase()}</td>
+                            <td>${trade.shares.toFixed(2)}</td>
+                            <td>$${trade.price.toFixed(2)}</td>
+                            <td class="${pnlClass}">$${trade.pnl.toFixed(2)}</td>
+                            <td class="${pnlClass}">${(trade.pnl_pct * 100).toFixed(2)}%</td>
+                            <td>${new Date(trade.timestamp).toLocaleString()}</td>
+                        </tr>`;
+                    }
+                });
+                
+                tableHTML += '</tbody></table>';
+                tradesContent.innerHTML = tableHTML;
+            } else {
+                tradesContent.innerHTML = '<p style="text-align:center;padding:20px;color:#6b7280;">No trades executed during backtest period</p>';
+            }
+        }
+        
+        // Load current settings on page load
+        async function loadCurrentSettings() {
+            try {
+                const response = await fetch('/api/settings');
+                const settings = await response.json();
+                
+                document.getElementById('shortWindow').value = settings.short_window;
+                document.getElementById('longWindow').value = settings.long_window;
+                document.getElementById('volumeThreshold').value = settings.volume_threshold;
+                document.getElementById('stopLossPct').value = settings.stop_loss_pct;
+                document.getElementById('symbols').value = settings.symbols;
+            } catch (error) {
+                console.error('Error loading settings:', error);
+            }
+        }
+        
+        loadCurrentSettings();
     </script>
 </body>
 </html>

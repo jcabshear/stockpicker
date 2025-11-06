@@ -13,7 +13,7 @@ from pydantic import BaseModel
 import uvicorn
 
 # Import dashboard templates
-from dashboard import MAIN_DASHBOARD_HTML, SETTINGS_PAGE_HTML
+from dashboard import MAIN_DASHBOARD_HTML, SETTINGS_PAGE_HTML, BACKTEST_PAGE_HTML
 
 # Import configurations
 import sys
@@ -78,6 +78,15 @@ class SettingsUpdate(BaseModel):
 
 class TradingToggle(BaseModel):
     enabled: bool
+
+class BacktestParams(BaseModel):
+    short_window: int
+    long_window: int
+    volume_threshold: float
+    stop_loss_pct: float
+    symbols: str
+    days: int
+    initial_capital: float
 
 # ============================================================================
 # FASTAPI APP
@@ -219,6 +228,86 @@ async def dashboard():
 async def settings_page():
     """Serve settings page"""
     return SETTINGS_PAGE_HTML
+
+
+@app.get("/backtest", response_class=HTMLResponse)
+async def backtest_page():
+    """Serve backtest page"""
+    return BACKTEST_PAGE_HTML
+
+
+@app.post("/api/backtest")
+async def run_backtest(params: BacktestParams):
+    """Run a backtest with given parameters"""
+    try:
+        from datetime import datetime, timedelta
+        from backtester import Backtester
+        from sma_crossover_strategy import SMACrossoverStrategy
+        
+        logger.info(f"Starting backtest: {params.symbols} for {params.days} days")
+        
+        # Create backtester
+        backtester = Backtester(
+            api_key=settings.alpaca_key,
+            api_secret=settings.alpaca_secret,
+            initial_capital=params.initial_capital
+        )
+        
+        # Create strategy with test parameters
+        strategy = SMACrossoverStrategy(
+            short_window=params.short_window,
+            long_window=params.long_window,
+            volume_threshold=params.volume_threshold,
+            stop_loss_pct=params.stop_loss_pct
+        )
+        
+        # Parse symbols
+        symbols = [s.strip() for s in params.symbols.split(',')]
+        
+        # Date range
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=params.days)
+        
+        # Run backtest
+        results = backtester.run(
+            strategy=strategy,
+            symbols=symbols,
+            start_date=start_date,
+            end_date=end_date
+        )
+        
+        # Convert trades DataFrame to list of dicts for JSON
+        trades_list = []
+        if 'trades' in results and not results['trades'].empty:
+            trades_list = results['trades'].to_dict('records')
+            # Convert timestamps to ISO format
+            for trade in trades_list:
+                if 'timestamp' in trade:
+                    trade['timestamp'] = trade['timestamp'].isoformat()
+        
+        # Return results
+        return {
+            "strategy": results['strategy'],
+            "initial_capital": results['initial_capital'],
+            "final_value": results['final_value'],
+            "total_return": results['total_return'],
+            "total_return_pct": results['total_return_pct'],
+            "total_trades": results['total_trades'],
+            "winning_trades": results['winning_trades'],
+            "losing_trades": results['losing_trades'],
+            "win_rate": results['win_rate'],
+            "avg_win": results['avg_win'],
+            "avg_loss": results['avg_loss'],
+            "profit_factor": results['profit_factor'],
+            "sharpe_ratio": results['sharpe_ratio'],
+            "max_drawdown": results['max_drawdown'],
+            "max_drawdown_pct": results['max_drawdown_pct'],
+            "trades": trades_list
+        }
+        
+    except Exception as e:
+        logger.error(f"Backtest failed: {e}")
+        raise HTTPException(500, f"Backtest failed: {str(e)}")
 
 
 @app.get("/health")
