@@ -310,9 +310,9 @@ def get_stats():
     }
 
 
-@app.get("/settings")
-def get_settings():
-    """Get current settings"""
+@app.get("/api/settings")
+def get_settings_api():
+    """Get current settings as JSON"""
     return runtime_settings
 
 

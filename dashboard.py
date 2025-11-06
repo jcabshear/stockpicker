@@ -557,7 +557,7 @@ MAIN_DASHBOARD_HTML = """
                     fetch('/health').then(r => r.json()),
                     fetch('/stats').then(r => r.json()),
                     fetch('/positions').then(r => r.json()),
-                    fetch('/settings').then(r => r.json()),
+                    fetch('/api/settings').then(r => r.json()),
                     fetch('/account').then(r => r.json())
                 ]);
                 updateDashboard(health, stats, positions, settings, account);
@@ -975,7 +975,7 @@ SETTINGS_PAGE_HTML = """
     <script>
         async function loadSettings() {
             try {
-                const response = await fetch('/settings');
+                const response = await fetch('/api/settings');
                 const settings = await response.json();
                 
                 document.getElementById('shortWindow').value = settings.short_window;
