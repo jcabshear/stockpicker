@@ -1,6 +1,6 @@
 """
 Modular Autonomous Trading Bot with Auto Stock Selection
-Professional redesigned dashboard with trading toggle
+Clean main.py with separated dashboard templates
 """
 
 import os
@@ -12,13 +12,16 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 import uvicorn
 
-# Import after creating files
+# Import dashboard templates
+from dashboard import MAIN_DASHBOARD_HTML, SETTINGS_PAGE_HTML
+
+# Import configurations
 import sys
 sys.path.insert(0, '/home/claude')
 
 from config import settings
 
-# Dynamic imports to handle file creation
+# Dynamic imports
 try:
     from daily_selector import DailyStockSelector
     AUTO_SELECT_AVAILABLE = True
@@ -43,7 +46,7 @@ heartbeat_task: Optional[asyncio.Task] = None
 selector_task: Optional[asyncio.Task] = None
 stock_selector: Optional[DailyStockSelector] = None
 
-# Editable settings (runtime overrides)
+# Runtime settings
 runtime_settings = {
     "allow_trading": settings.allow_trading,
     "max_usd_per_order": settings.max_usd_per_order,
@@ -77,596 +80,10 @@ class TradingToggle(BaseModel):
     enabled: bool
 
 # ============================================================================
-# PROFESSIONAL DASHBOARD HTML WITH TOGGLE
-# ============================================================================
-
-DASHBOARD_HTML = """
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Trading Dashboard</title>
-    <style>
-        * { 
-            margin: 0; 
-            padding: 0; 
-            box-sizing: border-box; 
-        }
-        
-        body {
-            font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: #1a1a2e;
-            min-height: 100vh;
-            padding: 0;
-        }
-        
-        .container { 
-            max-width: 1400px; 
-            margin: 0 auto;
-            padding: 0;
-        }
-        
-        /* Header */
-        .header {
-            background: rgba(255, 255, 255, 0.98);
-            backdrop-filter: blur(20px);
-            border-bottom: 1px solid rgba(0, 0, 0, 0.08);
-            padding: 24px 40px;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
-        }
-        
-        .header-content {
-            max-width: 1400px;
-            margin: 0 auto;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        
-        .logo-section h1 { 
-            font-size: 28px;
-            font-weight: 700;
-            letter-spacing: -0.5px;
-            color: #1a1a2e;
-            margin-bottom: 4px;
-        }
-        
-        .tagline {
-            font-size: 14px;
-            color: #666;
-            font-weight: 400;
-        }
-        
-        .status-section {
-            display: flex;
-            gap: 12px;
-            align-items: center;
-        }
-        
-        .status-badge {
-            display: inline-flex;
-            align-items: center;
-            padding: 8px 16px;
-            border-radius: 20px;
-            font-weight: 600;
-            font-size: 13px;
-            letter-spacing: 0.3px;
-            transition: all 0.3s;
-        }
-        
-        .status-badge::before {
-            content: '';
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            margin-right: 8px;
-            animation: pulse 2s ease-in-out infinite;
-        }
-        
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
-        }
-        
-        .status-running { 
-            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-            color: white; 
-        }
-        .status-running::before { background: white; }
-        
-        .status-disabled { 
-            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
-            color: white; 
-        }
-        .status-disabled::before { background: white; }
-        
-        .status-auto { 
-            background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
-            color: white; 
-        }
-        .status-auto::before { background: white; }
-        
-        /* Toggle Switch */
-        .toggle-container {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            background: rgba(255, 255, 255, 0.95);
-            padding: 12px 20px;
-            border-radius: 24px;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-        }
-        
-        .toggle-label {
-            font-weight: 600;
-            font-size: 14px;
-            color: #374151;
-        }
-        
-        .toggle-switch {
-            position: relative;
-            width: 56px;
-            height: 28px;
-            cursor: pointer;
-        }
-        
-        .toggle-switch input {
-            opacity: 0;
-            width: 0;
-            height: 0;
-        }
-        
-        .toggle-slider {
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: #cbd5e1;
-            border-radius: 28px;
-            transition: all 0.3s;
-        }
-        
-        .toggle-slider:before {
-            content: '';
-            position: absolute;
-            height: 20px;
-            width: 20px;
-            left: 4px;
-            bottom: 4px;
-            background: white;
-            border-radius: 50%;
-            transition: all 0.3s;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-        }
-        
-        .toggle-switch input:checked + .toggle-slider {
-            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-        }
-        
-        .toggle-switch input:checked + .toggle-slider:before {
-            transform: translateX(28px);
-        }
-        
-        .toggle-switch input:disabled + .toggle-slider {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-        
-        /* Main Content */
-        .main-content {
-            padding: 32px 40px;
-        }
-        
-        /* Info Banner */
-        .info-banner {
-            background: rgba(255, 255, 255, 0.95);
-            padding: 20px 24px;
-            border-radius: 16px;
-            margin-bottom: 24px;
-            border-left: 4px solid #3b82f6;
-            box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
-            display: none;
-        }
-        
-        .info-banner strong {
-            color: #1e40af;
-            font-weight: 600;
-        }
-        
-        .info-banner p {
-            color: #4b5563;
-            line-height: 1.6;
-            margin-top: 4px;
-        }
-        
-        /* Warning Banner */
-        .warning-banner {
-            background: rgba(255, 255, 255, 0.95);
-            padding: 20px 24px;
-            border-radius: 16px;
-            margin-bottom: 24px;
-            border-left: 4px solid #f59e0b;
-            box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
-        }
-        
-        .warning-banner strong {
-            color: #d97706;
-            font-weight: 600;
-        }
-        
-        .warning-banner p {
-            color: #4b5563;
-            line-height: 1.6;
-            margin-top: 4px;
-        }
-        
-        /* Stats Grid */
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-            gap: 20px;
-            margin-bottom: 24px;
-        }
-        
-        .stat-card {
-            background: rgba(255, 255, 255, 0.95);
-            padding: 24px;
-            border-radius: 16px;
-            box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
-            transition: transform 0.2s, box-shadow 0.2s;
-            border: 1px solid rgba(0, 0, 0, 0.06);
-        }
-        
-        .stat-card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
-        }
-        
-        .stat-label {
-            font-size: 12px;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            color: #6b7280;
-            font-weight: 600;
-            margin-bottom: 8px;
-        }
-        
-        .stat-value {
-            font-size: 32px;
-            font-weight: 700;
-            color: #1a1a2e;
-            margin-bottom: 4px;
-        }
-        
-        .stat-subvalue {
-            font-size: 13px;
-            color: #9ca3af;
-            font-weight: 500;
-        }
-        
-        .positive { color: #10b981; }
-        .negative { color: #ef4444; }
-        
-        /* Positions Table */
-        .positions-section {
-            background: rgba(255, 255, 255, 0.95);
-            border-radius: 16px;
-            padding: 28px;
-            box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
-            border: 1px solid rgba(0, 0, 0, 0.06);
-        }
-        
-        .section-header {
-            font-size: 20px;
-            font-weight: 700;
-            color: #1a1a2e;
-            margin-bottom: 20px;
-            letter-spacing: -0.3px;
-        }
-        
-        table { 
-            width: 100%; 
-            border-collapse: separate;
-            border-spacing: 0;
-        }
-        
-        thead {
-            background: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%);
-        }
-        
-        th {
-            text-align: left;
-            padding: 16px;
-            color: #6b7280;
-            font-weight: 600;
-            font-size: 12px;
-            text-transform: uppercase;
-            letter-spacing: 0.8px;
-            border-bottom: 2px solid #e5e7eb;
-        }
-        
-        th:first-child { border-radius: 12px 0 0 0; }
-        th:last-child { border-radius: 0 12px 0 0; }
-        
-        td { 
-            padding: 18px 16px; 
-            border-bottom: 1px solid #f3f4f6;
-            font-size: 14px;
-            color: #374151;
-        }
-        
-        tbody tr {
-            transition: background 0.2s;
-        }
-        
-        tbody tr:hover {
-            background: #f9fafb;
-        }
-        
-        tbody tr:last-child td {
-            border-bottom: none;
-        }
-        
-        tbody tr:last-child td:first-child { border-radius: 0 0 0 12px; }
-        tbody tr:last-child td:last-child { border-radius: 0 0 12px 0; }
-        
-        .symbol-cell {
-            font-weight: 700;
-            color: #1a1a2e;
-            font-size: 15px;
-        }
-        
-        .empty-state {
-            text-align: center;
-            padding: 60px 20px;
-            color: #9ca3af;
-        }
-        
-        .empty-state-icon {
-            font-size: 48px;
-            margin-bottom: 12px;
-            opacity: 0.3;
-        }
-        
-        /* Responsive */
-        @media (max-width: 768px) {
-            .header-content {
-                flex-direction: column;
-                align-items: flex-start;
-                gap: 16px;
-            }
-            
-            .status-section {
-                flex-wrap: wrap;
-            }
-            
-            .stats-grid {
-                grid-template-columns: 1fr;
-            }
-            
-            .main-content {
-                padding: 20px;
-            }
-            
-            .positions-section {
-                overflow-x: auto;
-            }
-            
-            table {
-                min-width: 600px;
-            }
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <div class="header-content">
-                <div class="logo-section">
-                    <h1>Trading Dashboard</h1>
-                    <div class="tagline">Algorithmic Trading System • Paper Account</div>
-                </div>
-                <div class="status-section">
-                    <div class="toggle-container">
-                        <span class="toggle-label">Trading</span>
-                        <label class="toggle-switch">
-                            <input type="checkbox" id="tradingToggle">
-                            <span class="toggle-slider"></span>
-                        </label>
-                    </div>
-                    <span id="statusBadge" class="status-badge">Loading...</span>
-                    <span id="autoSelectBadge" class="status-badge status-auto" style="display:none;">Auto-Select</span>
-                </div>
-            </div>
-        </div>
-        
-        <div class="main-content">
-            <div id="warningBanner" class="warning-banner" style="display:none;">
-                <strong>⚠️ Trading Disabled</strong>
-                <p>The bot is monitoring only. Enable the toggle above to allow trade execution.</p>
-            </div>
-            
-            <div id="infoBanner" class="info-banner">
-                <strong>Intelligent Stock Selection Active</strong>
-                <p>System automatically analyzes and selects optimal trading opportunities daily based on multi-factor technical analysis.</p>
-            </div>
-            
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <div class="stat-label">Active Symbols</div>
-                    <div class="stat-value" id="symbols" style="font-size: 20px; line-height: 1.3;">--</div>
-                    <div class="stat-subvalue" id="symbolsSource">Loading...</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-label">Daily P&L</div>
-                    <div class="stat-value" id="dailyPnl">$0.00</div>
-                    <div class="stat-subvalue">Today's Performance</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-label">Total Trades</div>
-                    <div class="stat-value" id="totalTrades">0</div>
-                    <div class="stat-subvalue"><span id="winRate">0%</span> Win Rate</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-label">Open Positions</div>
-                    <div class="stat-value" id="positionCount">0</div>
-                    <div class="stat-subvalue">Active Trades</div>
-                </div>
-            </div>
-            
-            <div class="positions-section">
-                <h2 class="section-header">Current Positions</h2>
-                <div id="positionsContent">
-                    <div class="empty-state">
-                        <div class="empty-state-icon">📊</div>
-                        <div>No open positions</div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-    
-    <script>
-        let isUpdatingToggle = false;
-        
-        async function fetchData() {
-            try {
-                const [health, stats, positions, settings] = await Promise.all([
-                    fetch('/health').then(r => r.json()),
-                    fetch('/stats').then(r => r.json()),
-                    fetch('/positions').then(r => r.json()),
-                    fetch('/settings').then(r => r.json())
-                ]);
-                updateDashboard(health, stats, positions, settings);
-            } catch (error) {
-                console.error('Error:', error);
-            }
-        }
-        
-        function updateDashboard(health, stats, positions, settings) {
-            // Update toggle without triggering change event
-            const toggle = document.getElementById('tradingToggle');
-            const wasChecked = toggle.checked;
-            const shouldBeChecked = health.trading_enabled;
-            
-            if (wasChecked !== shouldBeChecked && !isUpdatingToggle) {
-                toggle.checked = shouldBeChecked;
-            }
-            
-            // Status badge
-            const statusBadge = document.getElementById('statusBadge');
-            if (health.trading_enabled) {
-                statusBadge.textContent = 'Trading Active';
-                statusBadge.className = 'status-badge status-running';
-                document.getElementById('warningBanner').style.display = 'none';
-            } else {
-                statusBadge.textContent = 'Monitoring Only';
-                statusBadge.className = 'status-badge status-disabled';
-                document.getElementById('warningBanner').style.display = 'block';
-            }
-            
-            // Auto-select badge
-            if (settings.auto_select_stocks) {
-                document.getElementById('autoSelectBadge').style.display = 'inline-flex';
-                document.getElementById('infoBanner').style.display = 'block';
-            }
-            
-            // Symbols
-            const symbolsEl = document.getElementById('symbols');
-            const symbolsSourceEl = document.getElementById('symbolsSource');
-            if (settings.symbols) {
-                symbolsEl.textContent = settings.symbols.replace(/,/g, ', ');
-                if (settings.auto_select_stocks) {
-                    symbolsSourceEl.textContent = 'Auto-selected (Min Score: ' + settings.min_stock_score + ')';
-                } else {
-                    symbolsSourceEl.textContent = 'Manually configured';
-                }
-            }
-            
-            // P&L
-            const pnl = stats.daily_pnl || 0;
-            const pnlEl = document.getElementById('dailyPnl');
-            pnlEl.textContent = `$${pnl.toFixed(2)}`;
-            pnlEl.className = 'stat-value ' + (pnl >= 0 ? 'positive' : 'negative');
-            
-            // Stats
-            document.getElementById('totalTrades').textContent = stats.total_trades || 0;
-            document.getElementById('winRate').textContent = (stats.win_rate || 0) + '%';
-            document.getElementById('positionCount').textContent = health.positions || 0;
-            
-            // Positions
-            const positionsContent = document.getElementById('positionsContent');
-            if (positions.positions && positions.positions.length > 0) {
-                let tableHTML = '<table><thead><tr><th>Symbol</th><th>Shares</th><th>Entry Price</th><th>Current Price</th><th>P&L</th><th>P&L %</th></tr></thead><tbody>';
-                positions.positions.forEach(pos => {
-                    const pnlClass = pos.pnl >= 0 ? 'positive' : 'negative';
-                    tableHTML += `<tr>
-                        <td class="symbol-cell">${pos.symbol}</td>
-                        <td>${pos.shares.toFixed(2)}</td>
-                        <td>$${pos.entry_price.toFixed(2)}</td>
-                        <td>$${pos.current_price.toFixed(2)}</td>
-                        <td class="${pnlClass}">$${pos.pnl.toFixed(2)}</td>
-                        <td class="${pnlClass}">${pos.pnl_pct.toFixed(2)}%</td>
-                    </tr>`;
-                });
-                tableHTML += '</tbody></table>';
-                positionsContent.innerHTML = tableHTML;
-            } else {
-                positionsContent.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📊</div><div>No open positions</div></div>';
-            }
-        }
-        
-        // Toggle handler
-        document.getElementById('tradingToggle').addEventListener('change', async function(e) {
-            if (isUpdatingToggle) return;
-            
-            isUpdatingToggle = true;
-            const enabled = e.target.checked;
-            
-            try {
-                const response = await fetch('/toggle-trading', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ enabled: enabled })
-                });
-                
-                if (!response.ok) {
-                    throw new Error('Failed to toggle trading');
-                }
-                
-                const result = await response.json();
-                console.log('Trading toggled:', result);
-                
-                // Refresh data immediately
-                await fetchData();
-            } catch (error) {
-                console.error('Error toggling trading:', error);
-                // Revert toggle on error
-                e.target.checked = !enabled;
-                alert('Failed to toggle trading. Please try again.');
-            } finally {
-                isUpdatingToggle = false;
-            }
-        });
-        
-        // Initial fetch
-        fetchData();
-        
-        // Refresh every 10 seconds
-        setInterval(fetchData, 10000);
-    </script>
-</body>
-</html>
-"""
-
-# ============================================================================
 # FASTAPI APP
 # ============================================================================
 
-app = FastAPI(title="Trading Bot API with Auto Stock Selection")
+app = FastAPI(title="Trading Bot API")
 
 
 @app.on_event("startup")
@@ -692,12 +109,10 @@ async def shutdown_event():
 
 async def update_trading_symbols(new_symbols: list):
     """Callback when stock selector picks new symbols"""
-    global runtime_settings, trader
+    global runtime_settings
     
     print(f"\n📊 Updating trading symbols: {', '.join(new_symbols)}")
     runtime_settings["symbols"] = ','.join(new_symbols)
-    
-    # Restart trader with new symbols
     await initialize_bot()
 
 
@@ -732,14 +147,12 @@ async def initialize_bot():
         if stock_selector is None:
             stock_selector = DailyStockSelector(settings.alpaca_key, settings.alpaca_secret)
         
-        # Get current best stocks
         symbols = stock_selector.get_current_symbols()
         runtime_settings["symbols"] = ','.join(symbols)
         
         print(f"   Selected stocks: {', '.join(symbols)}")
         print(f"   Min score threshold: {runtime_settings.get('min_stock_score', 60)}")
         
-        # Start auto-selection background task
         if selector_task is None or selector_task.done():
             selector_task = asyncio.create_task(
                 stock_selector.auto_select_loop(update_trading_symbols)
@@ -764,7 +177,6 @@ async def initialize_bot():
     print(f"   Dashboard: http://0.0.0.0:{port}")
     print("="*80 + "\n")
     
-    # Import strategy and trader here to handle missing files
     try:
         from sma_crossover_strategy import SMACrossoverStrategy
         from live_trader import LiveTrader
@@ -793,10 +205,20 @@ async def initialize_bot():
         print("   Bot running in monitor-only mode")
 
 
+# ============================================================================
+# API ENDPOINTS
+# ============================================================================
+
 @app.get("/", response_class=HTMLResponse)
 async def dashboard():
-    """Serve the dashboard"""
-    return DASHBOARD_HTML
+    """Serve main dashboard"""
+    return MAIN_DASHBOARD_HTML
+
+
+@app.get("/settings", response_class=HTMLResponse)
+async def settings_page():
+    """Serve settings page"""
+    return SETTINGS_PAGE_HTML
 
 
 @app.get("/health")
@@ -815,6 +237,35 @@ def health():
         "total_trades": trader.total_trades,
         "market_open": trader.is_market_open()
     }
+
+
+@app.get("/account")
+def get_account():
+    """Get Alpaca account information"""
+    try:
+        from alpaca.trading.client import TradingClient
+        
+        client = TradingClient(settings.alpaca_key, settings.alpaca_secret, paper=settings.paper)
+        account = client.get_account()
+        
+        return {
+            "equity": float(account.equity),
+            "buying_power": float(account.buying_power),
+            "cash": float(account.cash),
+            "portfolio_value": float(account.portfolio_value),
+            "today_pnl": float(account.equity) - float(account.last_equity),
+            "status": account.status
+        }
+    except Exception as e:
+        logger.error(f"Error fetching account data: {e}")
+        return {
+            "equity": 0,
+            "buying_power": 0,
+            "cash": 0,
+            "portfolio_value": 0,
+            "today_pnl": 0,
+            "status": "error"
+        }
 
 
 @app.get("/positions")
@@ -949,7 +400,7 @@ async def manual_screen():
 
 
 # ============================================================================
-# HEARTBEAT TASK
+# BACKGROUND TASKS
 # ============================================================================
 
 async def heartbeat():
