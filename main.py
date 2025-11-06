@@ -70,8 +70,8 @@ class SettingsUpdate(BaseModel):
     long_window: int
     volume_threshold: float
     stop_loss_pct: float
-    auto_select_stocks: bool = False
-    min_stock_score: float = 60.0
+    auto_select_stocks: bool
+    min_stock_score: float
 
 # ============================================================================
 # HTML DASHBOARD (Updated with auto-selection info)
@@ -86,21 +86,39 @@ DASHBOARD_HTML = """
     <title>Trading Bot Dashboard</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
+        
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0a0e27;
+            color: #e0e7ff;
             min-height: 100vh;
             padding: 20px;
+            background-image: 
+                radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.1) 0px, transparent 50%),
+                radial-gradient(at 100% 100%, rgba(168, 85, 247, 0.1) 0px, transparent 50%);
         }
+        
         .container { max-width: 1400px; margin: 0 auto; }
+        
         .header {
-            background: white;
+            background: rgba(15, 23, 42, 0.6);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(99, 102, 241, 0.2);
             padding: 30px;
-            border-radius: 15px;
-            margin-bottom: 20px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            border-radius: 20px;
+            margin-bottom: 25px;
+            box-shadow: 
+                0 0 40px rgba(99, 102, 241, 0.1),
+                inset 0 1px 0 rgba(255, 255, 255, 0.05);
         }
-        .header h1 { color: #333; font-size: 2.5em; margin-bottom: 10px; }
+        
+        .header h1 { 
+            color: #f0f9ff; 
+            font-size: 2.5em; 
+            margin-bottom: 15px;
+            font-weight: 700;
+            letter-spacing: -1px;
+        }
         .status-badge {
             display: inline-block;
             padding: 8px 16px;
