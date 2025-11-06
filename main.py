@@ -1,6 +1,6 @@
 """
 Modular Autonomous Trading Bot with Auto Stock Selection
-Professional redesigned dashboard
+Professional redesigned dashboard with trading toggle
 """
 
 import os
@@ -73,8 +73,11 @@ class SettingsUpdate(BaseModel):
     auto_select_stocks: bool
     min_stock_score: float
 
+class TradingToggle(BaseModel):
+    enabled: bool
+
 # ============================================================================
-# PROFESSIONAL DASHBOARD HTML
+# PROFESSIONAL DASHBOARD HTML WITH TOGGLE
 # ============================================================================
 
 DASHBOARD_HTML = """
@@ -185,6 +188,73 @@ DASHBOARD_HTML = """
         }
         .status-auto::before { background: white; }
         
+        /* Toggle Switch */
+        .toggle-container {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 12px 20px;
+            border-radius: 24px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+        
+        .toggle-label {
+            font-weight: 600;
+            font-size: 14px;
+            color: #374151;
+        }
+        
+        .toggle-switch {
+            position: relative;
+            width: 56px;
+            height: 28px;
+            cursor: pointer;
+        }
+        
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        
+        .toggle-slider {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: #cbd5e1;
+            border-radius: 28px;
+            transition: all 0.3s;
+        }
+        
+        .toggle-slider:before {
+            content: '';
+            position: absolute;
+            height: 20px;
+            width: 20px;
+            left: 4px;
+            bottom: 4px;
+            background: white;
+            border-radius: 50%;
+            transition: all 0.3s;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+        }
+        
+        .toggle-switch input:checked + .toggle-slider {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        }
+        
+        .toggle-switch input:checked + .toggle-slider:before {
+            transform: translateX(28px);
+        }
+        
+        .toggle-switch input:disabled + .toggle-slider {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
         /* Main Content */
         .main-content {
             padding: 32px 40px;
@@ -207,6 +277,27 @@ DASHBOARD_HTML = """
         }
         
         .info-banner p {
+            color: #4b5563;
+            line-height: 1.6;
+            margin-top: 4px;
+        }
+        
+        /* Warning Banner */
+        .warning-banner {
+            background: rgba(255, 255, 255, 0.95);
+            padding: 20px 24px;
+            border-radius: 16px;
+            margin-bottom: 24px;
+            border-left: 4px solid #f59e0b;
+            box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+        }
+        
+        .warning-banner strong {
+            color: #d97706;
+            font-weight: 600;
+        }
+        
+        .warning-banner p {
             color: #4b5563;
             line-height: 1.6;
             margin-top: 4px;
@@ -348,6 +439,10 @@ DASHBOARD_HTML = """
                 gap: 16px;
             }
             
+            .status-section {
+                flex-wrap: wrap;
+            }
+            
             .stats-grid {
                 grid-template-columns: 1fr;
             }
@@ -372,9 +467,16 @@ DASHBOARD_HTML = """
             <div class="header-content">
                 <div class="logo-section">
                     <h1>Trading Dashboard</h1>
-                    <div class="tagline">Algorithmic Trading System</div>
+                    <div class="tagline">Algorithmic Trading System • Paper Account</div>
                 </div>
                 <div class="status-section">
+                    <div class="toggle-container">
+                        <span class="toggle-label">Trading</span>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="tradingToggle">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
                     <span id="statusBadge" class="status-badge">Loading...</span>
                     <span id="autoSelectBadge" class="status-badge status-auto" style="display:none;">Auto-Select</span>
                 </div>
@@ -382,6 +484,11 @@ DASHBOARD_HTML = """
         </div>
         
         <div class="main-content">
+            <div id="warningBanner" class="warning-banner" style="display:none;">
+                <strong>⚠️ Trading Disabled</strong>
+                <p>The bot is monitoring only. Enable the toggle above to allow trade execution.</p>
+            </div>
+            
             <div id="infoBanner" class="info-banner">
                 <strong>Intelligent Stock Selection Active</strong>
                 <p>System automatically analyzes and selects optimal trading opportunities daily based on multi-factor technical analysis.</p>
@@ -423,6 +530,8 @@ DASHBOARD_HTML = """
     </div>
     
     <script>
+        let isUpdatingToggle = false;
+        
         async function fetchData() {
             try {
                 const [health, stats, positions, settings] = await Promise.all([
@@ -438,14 +547,25 @@ DASHBOARD_HTML = """
         }
         
         function updateDashboard(health, stats, positions, settings) {
+            // Update toggle without triggering change event
+            const toggle = document.getElementById('tradingToggle');
+            const wasChecked = toggle.checked;
+            const shouldBeChecked = health.trading_enabled;
+            
+            if (wasChecked !== shouldBeChecked && !isUpdatingToggle) {
+                toggle.checked = shouldBeChecked;
+            }
+            
             // Status badge
             const statusBadge = document.getElementById('statusBadge');
             if (health.trading_enabled) {
                 statusBadge.textContent = 'Trading Active';
                 statusBadge.className = 'status-badge status-running';
+                document.getElementById('warningBanner').style.display = 'none';
             } else {
                 statusBadge.textContent = 'Monitoring Only';
                 statusBadge.className = 'status-badge status-disabled';
+                document.getElementById('warningBanner').style.display = 'block';
             }
             
             // Auto-select badge
@@ -499,8 +619,44 @@ DASHBOARD_HTML = """
             }
         }
         
+        // Toggle handler
+        document.getElementById('tradingToggle').addEventListener('change', async function(e) {
+            if (isUpdatingToggle) return;
+            
+            isUpdatingToggle = true;
+            const enabled = e.target.checked;
+            
+            try {
+                const response = await fetch('/toggle-trading', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled: enabled })
+                });
+                
+                if (!response.ok) {
+                    throw new Error('Failed to toggle trading');
+                }
+                
+                const result = await response.json();
+                console.log('Trading toggled:', result);
+                
+                // Refresh data immediately
+                await fetchData();
+            } catch (error) {
+                console.error('Error toggling trading:', error);
+                // Revert toggle on error
+                e.target.checked = !enabled;
+                alert('Failed to toggle trading. Please try again.');
+            } finally {
+                isUpdatingToggle = false;
+            }
+        });
+        
+        // Initial fetch
         fetchData();
-        setInterval(fetchData, 10000); // Refresh every 10 seconds
+        
+        // Refresh every 10 seconds
+        setInterval(fetchData, 10000);
     </script>
 </body>
 </html>
@@ -707,6 +863,27 @@ def get_stats():
 def get_settings():
     """Get current settings"""
     return runtime_settings
+
+
+@app.post("/toggle-trading")
+async def toggle_trading(toggle: TradingToggle):
+    """Toggle trading on/off"""
+    global runtime_settings, trader
+    
+    runtime_settings["allow_trading"] = toggle.enabled
+    
+    if trader:
+        trader.allow_trading = toggle.enabled
+        
+    status = "enabled" if toggle.enabled else "disabled"
+    logger.info(f"Trading {status} via dashboard toggle")
+    print(f"\n{'🟢' if toggle.enabled else '🔴'} Trading {status} via dashboard")
+    
+    return {
+        "ok": True,
+        "trading_enabled": toggle.enabled,
+        "message": f"Trading {status}"
+    }
 
 
 @app.post("/settings")
