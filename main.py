@@ -87,6 +87,11 @@ class BacktestParams(BaseModel):
     symbols: str
     days: int
     initial_capital: float
+    # Screener settings
+    use_screener: bool = False
+    min_stock_score: float = 60
+    top_n_stocks: int = 3
+    screen_frequency: str = "daily"  # 'daily' or 'weekly'
 
 # ============================================================================
 # FASTAPI APP
@@ -241,17 +246,9 @@ async def run_backtest(params: BacktestParams):
     """Run a backtest with given parameters"""
     try:
         from datetime import datetime, timedelta
-        from backtester import Backtester
         from sma_crossover_strategy import SMACrossoverStrategy
         
-        logger.info(f"Starting backtest: {params.symbols} for {params.days} days")
-        
-        # Create backtester
-        backtester = Backtester(
-            api_key=settings.alpaca_key,
-            api_secret=settings.alpaca_secret,
-            initial_capital=params.initial_capital
-        )
+        logger.info(f"Starting backtest: {params.symbols} for {params.days} days (screener: {params.use_screener})")
         
         # Create strategy with test parameters
         strategy = SMACrossoverStrategy(
@@ -268,13 +265,43 @@ async def run_backtest(params: BacktestParams):
         end_date = datetime.now()
         start_date = end_date - timedelta(days=params.days)
         
-        # Run backtest
-        results = backtester.run(
-            strategy=strategy,
-            symbols=symbols,
-            start_date=start_date,
-            end_date=end_date
-        )
+        if params.use_screener:
+            # Use integrated backtester with screening
+            from integrated_backtester import IntegratedBacktester
+            
+            backtester = IntegratedBacktester(
+                api_key=settings.alpaca_key,
+                api_secret=settings.alpaca_secret,
+                initial_capital=params.initial_capital
+            )
+            
+            # Run with screening
+            results = backtester.run(
+                strategy=strategy,
+                stock_universe=symbols,  # These become the screening universe
+                start_date=start_date,
+                end_date=end_date,
+                min_score=params.min_stock_score,
+                top_n=params.top_n_stocks,
+                screen_frequency=params.screen_frequency
+            )
+        else:
+            # Use regular backtester with fixed symbols
+            from backtester import Backtester
+            
+            backtester = Backtester(
+                api_key=settings.alpaca_key,
+                api_secret=settings.alpaca_secret,
+                initial_capital=params.initial_capital
+            )
+            
+            # Run normal backtest
+            results = backtester.run(
+                strategy=strategy,
+                symbols=symbols,
+                start_date=start_date,
+                end_date=end_date
+            )
         
         # Convert trades DataFrame to list of dicts for JSON
         trades_list = []
@@ -286,7 +313,7 @@ async def run_backtest(params: BacktestParams):
                     trade['timestamp'] = trade['timestamp'].isoformat()
         
         # Return results
-        return {
+        response = {
             "strategy": results['strategy'],
             "initial_capital": results['initial_capital'],
             "final_value": results['final_value'],
@@ -305,8 +332,17 @@ async def run_backtest(params: BacktestParams):
             "trades": trades_list
         }
         
+        # Add screening-specific metrics if available
+        if 'unique_stocks_traded' in results:
+            response['unique_stocks_traded'] = results['unique_stocks_traded']
+            response['screening_sessions'] = results['screening_sessions']
+        
+        return response
+        
     except Exception as e:
         logger.error(f"Backtest failed: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(500, f"Backtest failed: {str(e)}")
 
 

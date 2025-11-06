@@ -1375,9 +1375,9 @@ BACKTEST_PAGE_HTML = """
                     <h2 class="section-title">Backtest Parameters</h2>
                     <div class="form-grid">
                         <div class="form-group">
-                            <label class="form-label">Trading Symbols</label>
+                            <label class="form-label">Trading Symbols / Stock Universe</label>
                             <input type="text" class="form-input" id="symbols" value="AAPL,MSFT,GOOGL" required>
-                            <div class="form-help">Comma-separated list</div>
+                            <div class="form-help">With screener OFF: symbols to trade. With screener ON: universe to screen from</div>
                         </div>
                         
                         <div class="form-group">
@@ -1390,6 +1390,45 @@ BACKTEST_PAGE_HTML = """
                             <label class="form-label">Initial Capital</label>
                             <input type="number" class="form-input" id="initialCapital" min="1000" max="1000000" value="10000" required>
                             <div class="form-help">Starting portfolio value</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="section">
+                    <h2 class="section-title">🎯 Stock Screener (Optional)</h2>
+                    
+                    <div class="form-group" style="margin-bottom: 20px;">
+                        <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
+                            <input type="checkbox" id="useScreener" style="width: 20px; height: 20px;">
+                            <span class="form-label" style="margin: 0;">Enable Daily Stock Screening</span>
+                        </label>
+                        <div class="form-help" style="margin-left: 32px;">
+                            When enabled, backtester will screen stocks daily, select top performers, and trade them
+                        </div>
+                    </div>
+                    
+                    <div id="screenerSettings" style="display: none;">
+                        <div class="form-grid">
+                            <div class="form-group">
+                                <label class="form-label">Min Stock Score</label>
+                                <input type="number" class="form-input" id="minStockScore" min="0" max="100" value="60">
+                                <div class="form-help">Minimum technical score (0-100)</div>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label class="form-label">Top N Stocks</label>
+                                <input type="number" class="form-input" id="topNStocks" min="1" max="10" value="3">
+                                <div class="form-help">Number of stocks to select daily</div>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label class="form-label">Screen Frequency</label>
+                                <select class="form-input" id="screenFrequency">
+                                    <option value="daily">Daily (re-screen every day)</option>
+                                    <option value="weekly">Weekly (re-screen every 7 days)</option>
+                                </select>
+                                <div class="form-help">How often to re-run screening</div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -1451,6 +1490,12 @@ BACKTEST_PAGE_HTML = """
     </div>
     
     <script>
+        // Toggle screener settings visibility
+        document.getElementById('useScreener').addEventListener('change', function(e) {
+            const screenerSettings = document.getElementById('screenerSettings');
+            screenerSettings.style.display = e.target.checked ? 'block' : 'none';
+        });
+        
         document.getElementById('backtestForm').addEventListener('submit', async function(e) {
             e.preventDefault();
             
@@ -1465,8 +1510,11 @@ BACKTEST_PAGE_HTML = """
             
             // Show loading
             runBtn.disabled = true;
-            runBtn.textContent = 'Running Backtest...';
-            loadingMsg.textContent = 'Running backtest... This may take 30-60 seconds.';
+            const useScreener = document.getElementById('useScreener').checked;
+            runBtn.textContent = useScreener ? 'Running Integrated Backtest...' : 'Running Backtest...';
+            loadingMsg.textContent = useScreener 
+                ? 'Running integrated backtest with daily screening... This may take 60-120 seconds.'
+                : 'Running backtest... This may take 30-60 seconds.';
             loadingMsg.style.display = 'block';
             
             const params = {
@@ -1476,7 +1524,11 @@ BACKTEST_PAGE_HTML = """
                 stop_loss_pct: parseFloat(document.getElementById('stopLossPct').value),
                 symbols: document.getElementById('symbols').value,
                 days: parseInt(document.getElementById('daysToTest').value),
-                initial_capital: parseFloat(document.getElementById('initialCapital').value)
+                initial_capital: parseFloat(document.getElementById('initialCapital').value),
+                use_screener: useScreener,
+                min_stock_score: parseFloat(document.getElementById('minStockScore').value),
+                top_n_stocks: parseInt(document.getElementById('topNStocks').value),
+                screen_frequency: document.getElementById('screenFrequency').value
             };
             
             try {
@@ -1554,6 +1606,14 @@ BACKTEST_PAGE_HTML = """
                 });
                 
                 tableHTML += '</tbody></table>';
+                
+                // Add summary if screener was used
+                if (results.unique_stocks_traded) {
+                    tableHTML = `<p style="margin-bottom: 16px; color: #1e40af; font-weight: 600;">
+                        📊 Screener Results: Traded ${results.unique_stocks_traded} unique stocks across ${results.screening_sessions} screening sessions
+                    </p>` + tableHTML;
+                }
+                
                 tradesContent.innerHTML = tableHTML;
             } else {
                 tradesContent.innerHTML = '<p style="text-align:center;padding:20px;color:#6b7280;">No trades executed during backtest period</p>';
@@ -1571,6 +1631,7 @@ BACKTEST_PAGE_HTML = """
                 document.getElementById('volumeThreshold').value = settings.volume_threshold;
                 document.getElementById('stopLossPct').value = settings.stop_loss_pct;
                 document.getElementById('symbols').value = settings.symbols;
+                document.getElementById('minStockScore').value = settings.min_stock_score;
             } catch (error) {
                 console.error('Error loading settings:', error);
             }
