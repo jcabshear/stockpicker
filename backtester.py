@@ -45,26 +45,60 @@ class Backtester:
         # Fetch data
         df = self.fetch_data(symbols, start_date, end_date, TimeFrame.Minute)
         
+        if df.empty:
+            print("No data returned from API")
+            return self._empty_results(strategy)
+        
         # Initialize
         cash = self.initial_capital
         positions = {}
         trades = []
         equity_curve = []
         
+        # Check if we have a MultiIndex or single index
+        has_multiindex = isinstance(df.index, pd.MultiIndex)
+        
         # Group by timestamp and iterate
-        for timestamp, group in df.groupby(level='timestamp'):
+        if has_multiindex:
+            grouped = df.groupby(level='timestamp')
+        else:
+            # Single symbol case - group by index (which is timestamp)
+            grouped = df.groupby(level=0)
+        
+        for timestamp, group in grouped:
             # Prepare market data
             market_data = {}
-            for symbol in symbols:
-                if symbol in group.index.get_level_values('symbol'):
-                    row = group.loc[(timestamp, symbol)]
+            
+            if has_multiindex:
+                for symbol in symbols:
+                    try:
+                        if symbol in group.index.get_level_values('symbol'):
+                            row = group.loc[(timestamp, symbol)]
+                            market_data[symbol] = {
+                                'open': row['open'],
+                                'high': row['high'],
+                                'low': row['low'],
+                                'close': row['close'],
+                                'volume': row['volume']
+                            }
+                    except Exception as e:
+                        continue
+            else:
+                # Single symbol - data is already at this timestamp
+                symbol = symbols[0]
+                try:
                     market_data[symbol] = {
-                        'open': row['open'],
-                        'high': row['high'],
-                        'low': row['low'],
-                        'close': row['close'],
-                        'volume': row['volume']
+                        'open': group['open'],
+                        'high': group['high'],
+                        'low': group['low'],
+                        'close': group['close'],
+                        'volume': group['volume']
                     }
+                except Exception as e:
+                    continue
+            
+            if not market_data:
+                continue
             
             # Update existing positions
             for symbol, pos in list(positions.items()):
@@ -171,9 +205,12 @@ class Backtester:
         sharpe = (returns.mean() / returns.std()) * (252 ** 0.5) if len(returns) > 0 and returns.std() > 0 else 0
         
         # Max drawdown
-        cummax = equity_df['equity'].cummax()
-        drawdown = (equity_df['equity'] - cummax) / cummax
-        max_drawdown = drawdown.min()
+        if len(equity_df) > 0:
+            cummax = equity_df['equity'].cummax()
+            drawdown = (equity_df['equity'] - cummax) / cummax
+            max_drawdown = drawdown.min()
+        else:
+            max_drawdown = 0
         
         self.results = {
             'strategy': strategy.name,
@@ -196,6 +233,28 @@ class Backtester:
         }
         
         return self.results
+    
+    def _empty_results(self, strategy: BaseStrategy) -> dict:
+        """Return empty results structure"""
+        return {
+            'strategy': strategy.name,
+            'initial_capital': self.initial_capital,
+            'final_value': self.initial_capital,
+            'total_return': 0,
+            'total_return_pct': 0,
+            'total_trades': 0,
+            'winning_trades': 0,
+            'losing_trades': 0,
+            'win_rate': 0,
+            'avg_win': 0,
+            'avg_loss': 0,
+            'profit_factor': 0,
+            'sharpe_ratio': 0,
+            'max_drawdown': 0,
+            'max_drawdown_pct': 0,
+            'trades': pd.DataFrame(),
+            'equity_curve': pd.DataFrame()
+        }
     
     def print_results(self):
         """Print backtest results"""
