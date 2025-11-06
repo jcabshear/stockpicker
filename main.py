@@ -1,6 +1,6 @@
 """
 Modular Autonomous Trading Bot with Auto Stock Selection
-Now automatically picks the top 3 stocks daily based on multi-factor scoring
+Professional redesigned dashboard
 """
 
 import os
@@ -74,7 +74,7 @@ class SettingsUpdate(BaseModel):
     min_stock_score: float
 
 # ============================================================================
-# HTML DASHBOARD (Updated with auto-selection info)
+# PROFESSIONAL DASHBOARD HTML
 # ============================================================================
 
 DASHBOARD_HTML = """
@@ -83,158 +83,342 @@ DASHBOARD_HTML = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Trading Bot Dashboard</title>
+    <title>Trading Dashboard</title>
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+        * { 
+            margin: 0; 
+            padding: 0; 
+            box-sizing: border-box; 
+        }
         
         body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #0a0e27;
-            color: #e0e7ff;
+            font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #1a1a2e;
             min-height: 100vh;
-            padding: 20px;
-            background-image: 
-                radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.1) 0px, transparent 50%),
-                radial-gradient(at 100% 100%, rgba(168, 85, 247, 0.1) 0px, transparent 50%);
+            padding: 0;
         }
         
-        .container { max-width: 1400px; margin: 0 auto; }
+        .container { 
+            max-width: 1400px; 
+            margin: 0 auto;
+            padding: 0;
+        }
         
+        /* Header */
         .header {
-            background: rgba(15, 23, 42, 0.6);
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(99, 102, 241, 0.2);
-            padding: 30px;
-            border-radius: 20px;
-            margin-bottom: 25px;
-            box-shadow: 
-                0 0 40px rgba(99, 102, 241, 0.1),
-                inset 0 1px 0 rgba(255, 255, 255, 0.05);
+            background: rgba(255, 255, 255, 0.98);
+            backdrop-filter: blur(20px);
+            border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+            padding: 24px 40px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
         }
         
-        .header h1 { 
-            color: #f0f9ff; 
-            font-size: 2.5em; 
-            margin-bottom: 15px;
-            font-weight: 700;
-            letter-spacing: -1px;
+        .header-content {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
+        
+        .logo-section h1 { 
+            font-size: 28px;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+            color: #1a1a2e;
+            margin-bottom: 4px;
+        }
+        
+        .tagline {
+            font-size: 14px;
+            color: #666;
+            font-weight: 400;
+        }
+        
+        .status-section {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+        
         .status-badge {
-            display: inline-block;
+            display: inline-flex;
+            align-items: center;
             padding: 8px 16px;
             border-radius: 20px;
-            font-weight: bold;
-            font-size: 0.9em;
+            font-weight: 600;
+            font-size: 13px;
+            letter-spacing: 0.3px;
+            transition: all 0.3s;
         }
-        .status-running { background: #10b981; color: white; }
-        .status-disabled { background: #f59e0b; color: white; }
-        .status-auto { background: #3b82f6; color: white; }
-        .grid {
+        
+        .status-badge::before {
+            content: '';
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 8px;
+            animation: pulse 2s ease-in-out infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .status-running { 
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            color: white; 
+        }
+        .status-running::before { background: white; }
+        
+        .status-disabled { 
+            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+            color: white; 
+        }
+        .status-disabled::before { background: white; }
+        
+        .status-auto { 
+            background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+            color: white; 
+        }
+        .status-auto::before { background: white; }
+        
+        /* Main Content */
+        .main-content {
+            padding: 32px 40px;
+        }
+        
+        /* Info Banner */
+        .info-banner {
+            background: rgba(255, 255, 255, 0.95);
+            padding: 20px 24px;
+            border-radius: 16px;
+            margin-bottom: 24px;
+            border-left: 4px solid #3b82f6;
+            box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+            display: none;
+        }
+        
+        .info-banner strong {
+            color: #1e40af;
+            font-weight: 600;
+        }
+        
+        .info-banner p {
+            color: #4b5563;
+            line-height: 1.6;
+            margin-top: 4px;
+        }
+        
+        /* Stats Grid */
+        .stats-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
             gap: 20px;
-            margin-bottom: 20px;
+            margin-bottom: 24px;
         }
-        .card {
-            background: white;
-            padding: 25px;
-            border-radius: 15px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        
+        .stat-card {
+            background: rgba(255, 255, 255, 0.95);
+            padding: 24px;
+            border-radius: 16px;
+            box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+            transition: transform 0.2s, box-shadow 0.2s;
+            border: 1px solid rgba(0, 0, 0, 0.06);
         }
-        .card h3 {
-            color: #555;
-            font-size: 0.9em;
+        
+        .stat-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+        }
+        
+        .stat-label {
+            font-size: 12px;
             text-transform: uppercase;
             letter-spacing: 1px;
-            margin-bottom: 10px;
+            color: #6b7280;
+            font-weight: 600;
+            margin-bottom: 8px;
         }
-        .card .value { font-size: 2em; font-weight: bold; color: #333; }
-        .card .subvalue { color: #888; font-size: 0.9em; margin-top: 5px; }
+        
+        .stat-value {
+            font-size: 32px;
+            font-weight: 700;
+            color: #1a1a2e;
+            margin-bottom: 4px;
+        }
+        
+        .stat-subvalue {
+            font-size: 13px;
+            color: #9ca3af;
+            font-weight: 500;
+        }
+        
         .positive { color: #10b981; }
         .negative { color: #ef4444; }
-        .positions-table {
-            background: white;
-            border-radius: 15px;
-            padding: 25px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
-            margin-bottom: 20px;
-            overflow-x: auto;
+        
+        /* Positions Table */
+        .positions-section {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 16px;
+            padding: 28px;
+            box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+            border: 1px solid rgba(0, 0, 0, 0.06);
         }
-        table { width: 100%; border-collapse: collapse; }
+        
+        .section-header {
+            font-size: 20px;
+            font-weight: 700;
+            color: #1a1a2e;
+            margin-bottom: 20px;
+            letter-spacing: -0.3px;
+        }
+        
+        table { 
+            width: 100%; 
+            border-collapse: separate;
+            border-spacing: 0;
+        }
+        
+        thead {
+            background: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%);
+        }
+        
         th {
             text-align: left;
-            padding: 15px;
-            color: #555;
+            padding: 16px;
+            color: #6b7280;
             font-weight: 600;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
             border-bottom: 2px solid #e5e7eb;
         }
-        td { padding: 15px; border-bottom: 1px solid #e5e7eb; }
-        .btn {
-            padding: 12px 24px;
-            border: none;
-            border-radius: 8px;
-            font-weight: bold;
-            cursor: pointer;
-            margin-right: 10px;
-            margin-bottom: 10px;
-            transition: all 0.3s;
-            font-size: 1em;
+        
+        th:first-child { border-radius: 12px 0 0 0; }
+        th:last-child { border-radius: 0 12px 0 0; }
+        
+        td { 
+            padding: 18px 16px; 
+            border-bottom: 1px solid #f3f4f6;
+            font-size: 14px;
+            color: #374151;
         }
-        .btn:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(0,0,0,0.2); }
-        .btn-primary { background: #667eea; color: white; }
-        .btn-success { background: #10b981; color: white; }
-        .btn-danger { background: #ef4444; color: white; }
-        .btn-warning { background: #f59e0b; color: white; }
-        .auto-select-info {
-            background: #dbeafe;
-            padding: 15px;
-            border-radius: 8px;
-            margin: 15px 0;
-            border-left: 4px solid #3b82f6;
+        
+        tbody tr {
+            transition: background 0.2s;
         }
-        .auto-select-info strong { color: #1e40af; }
+        
+        tbody tr:hover {
+            background: #f9fafb;
+        }
+        
+        tbody tr:last-child td {
+            border-bottom: none;
+        }
+        
+        tbody tr:last-child td:first-child { border-radius: 0 0 0 12px; }
+        tbody tr:last-child td:last-child { border-radius: 0 0 12px 0; }
+        
+        .symbol-cell {
+            font-weight: 700;
+            color: #1a1a2e;
+            font-size: 15px;
+        }
+        
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #9ca3af;
+        }
+        
+        .empty-state-icon {
+            font-size: 48px;
+            margin-bottom: 12px;
+            opacity: 0.3;
+        }
+        
+        /* Responsive */
+        @media (max-width: 768px) {
+            .header-content {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 16px;
+            }
+            
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .main-content {
+                padding: 20px;
+            }
+            
+            .positions-section {
+                overflow-x: auto;
+            }
+            
+            table {
+                min-width: 600px;
+            }
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>🤖 Trading Bot Dashboard</h1>
-            <div style="margin-top: 15px;">
-                <span id="statusBadge" class="status-badge">Loading...</span>
-                <span id="autoSelectBadge" class="status-badge status-auto" style="display:none;">🎯 Auto-Select</span>
-            </div>
-            <div id="autoSelectInfo" class="auto-select-info" style="display:none;">
-                <strong>🎯 Auto Stock Selection Active</strong><br>
-                Bot automatically picks top 3 stocks daily based on multi-factor scoring
-            </div>
-        </div>
-        
-        <div class="grid">
-            <div class="card">
-                <h3>Current Symbols</h3>
-                <div class="value" id="symbols" style="font-size:1.5em;">--</div>
-                <div class="subvalue" id="symbolsSource">Loading...</div>
-            </div>
-            <div class="card">
-                <h3>Daily P&L</h3>
-                <div class="value" id="dailyPnl">$0.00</div>
-                <div class="subvalue">Today's Performance</div>
-            </div>
-            <div class="card">
-                <h3>Total Trades</h3>
-                <div class="value" id="totalTrades">0</div>
-                <div class="subvalue"><span id="winRate">0%</span> Win Rate</div>
-            </div>
-            <div class="card">
-                <h3>Open Positions</h3>
-                <div class="value" id="positionCount">0</div>
-                <div class="subvalue">Active Trades</div>
+            <div class="header-content">
+                <div class="logo-section">
+                    <h1>Trading Dashboard</h1>
+                    <div class="tagline">Algorithmic Trading System</div>
+                </div>
+                <div class="status-section">
+                    <span id="statusBadge" class="status-badge">Loading...</span>
+                    <span id="autoSelectBadge" class="status-badge status-auto" style="display:none;">Auto-Select</span>
+                </div>
             </div>
         </div>
         
-        <div class="positions-table">
-            <h2 style="margin-bottom: 20px; color: #333;">Current Positions</h2>
-            <div id="positionsContent"><div style="text-align:center;padding:40px;">No open positions</div></div>
+        <div class="main-content">
+            <div id="infoBanner" class="info-banner">
+                <strong>Intelligent Stock Selection Active</strong>
+                <p>System automatically analyzes and selects optimal trading opportunities daily based on multi-factor technical analysis.</p>
+            </div>
+            
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-label">Active Symbols</div>
+                    <div class="stat-value" id="symbols" style="font-size: 20px; line-height: 1.3;">--</div>
+                    <div class="stat-subvalue" id="symbolsSource">Loading...</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Daily P&L</div>
+                    <div class="stat-value" id="dailyPnl">$0.00</div>
+                    <div class="stat-subvalue">Today's Performance</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Total Trades</div>
+                    <div class="stat-value" id="totalTrades">0</div>
+                    <div class="stat-subvalue"><span id="winRate">0%</span> Win Rate</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Open Positions</div>
+                    <div class="stat-value" id="positionCount">0</div>
+                    <div class="stat-subvalue">Active Trades</div>
+                </div>
+            </div>
+            
+            <div class="positions-section">
+                <h2 class="section-header">Current Positions</h2>
+                <div id="positionsContent">
+                    <div class="empty-state">
+                        <div class="empty-state-icon">📊</div>
+                        <div>No open positions</div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
     
@@ -257,17 +441,17 @@ DASHBOARD_HTML = """
             // Status badge
             const statusBadge = document.getElementById('statusBadge');
             if (health.trading_enabled) {
-                statusBadge.textContent = '✅ Trading Enabled';
+                statusBadge.textContent = 'Trading Active';
                 statusBadge.className = 'status-badge status-running';
             } else {
-                statusBadge.textContent = '💤 Trading Disabled';
+                statusBadge.textContent = 'Monitoring Only';
                 statusBadge.className = 'status-badge status-disabled';
             }
             
             // Auto-select badge
             if (settings.auto_select_stocks) {
-                document.getElementById('autoSelectBadge').style.display = 'inline-block';
-                document.getElementById('autoSelectInfo').style.display = 'block';
+                document.getElementById('autoSelectBadge').style.display = 'inline-flex';
+                document.getElementById('infoBanner').style.display = 'block';
             }
             
             // Symbols
@@ -276,7 +460,7 @@ DASHBOARD_HTML = """
             if (settings.symbols) {
                 symbolsEl.textContent = settings.symbols.replace(/,/g, ', ');
                 if (settings.auto_select_stocks) {
-                    symbolsSourceEl.textContent = '🎯 Auto-selected daily (score ≥' + settings.min_stock_score + ')';
+                    symbolsSourceEl.textContent = 'Auto-selected (Min Score: ' + settings.min_stock_score + ')';
                 } else {
                     symbolsSourceEl.textContent = 'Manually configured';
                 }
@@ -286,7 +470,7 @@ DASHBOARD_HTML = """
             const pnl = stats.daily_pnl || 0;
             const pnlEl = document.getElementById('dailyPnl');
             pnlEl.textContent = `$${pnl.toFixed(2)}`;
-            pnlEl.className = 'value ' + (pnl >= 0 ? 'positive' : 'negative');
+            pnlEl.className = 'stat-value ' + (pnl >= 0 ? 'positive' : 'negative');
             
             // Stats
             document.getElementById('totalTrades').textContent = stats.total_trades || 0;
@@ -296,11 +480,11 @@ DASHBOARD_HTML = """
             // Positions
             const positionsContent = document.getElementById('positionsContent');
             if (positions.positions && positions.positions.length > 0) {
-                let tableHTML = '<table><thead><tr><th>Symbol</th><th>Shares</th><th>Entry</th><th>Current</th><th>P&L</th><th>P&L %</th></tr></thead><tbody>';
+                let tableHTML = '<table><thead><tr><th>Symbol</th><th>Shares</th><th>Entry Price</th><th>Current Price</th><th>P&L</th><th>P&L %</th></tr></thead><tbody>';
                 positions.positions.forEach(pos => {
                     const pnlClass = pos.pnl >= 0 ? 'positive' : 'negative';
                     tableHTML += `<tr>
-                        <td><strong>${pos.symbol}</strong></td>
+                        <td class="symbol-cell">${pos.symbol}</td>
                         <td>${pos.shares.toFixed(2)}</td>
                         <td>$${pos.entry_price.toFixed(2)}</td>
                         <td>$${pos.current_price.toFixed(2)}</td>
@@ -311,7 +495,7 @@ DASHBOARD_HTML = """
                 tableHTML += '</tbody></table>';
                 positionsContent.innerHTML = tableHTML;
             } else {
-                positionsContent.innerHTML = '<div style="text-align:center;padding:40px;">No open positions</div>';
+                positionsContent.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📊</div><div>No open positions</div></div>';
             }
         }
         

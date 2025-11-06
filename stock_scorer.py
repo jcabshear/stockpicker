@@ -1,6 +1,7 @@
 """
 Multi-Factor Stock Scoring System
 Evaluates stocks across technical, momentum, volume, and volatility factors
+FIXED: Now uses IEX feed instead of SIP
 """
 
 from typing import List, Dict, Tuple
@@ -10,11 +11,12 @@ import pandas as pd
 try:
     import numpy as np
 except ImportError:
-    np = None  # NumPy is optional for this module
+    np = None
 from statistics import fmean, stdev
 from alpaca.data.historical import StockHistoricalDataClient
-from alpaca.data.requests import StockBarsRequest, StockLatestQuoteRequest
+from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
+from alpaca.data.enums import DataFeed  # ADDED: Import DataFeed
 
 
 @dataclass
@@ -35,15 +37,14 @@ class ScoredStock:
 class StockScorer:
     """Multi-factor scoring system for stock selection"""
     
-    def __init__(self, api_key: str, api_secret: str):
+    def __init__(self, api_key: str, api_secret: str, feed: str = "iex"):
+        # FIXED: Store feed preference and pass to client
+        self.feed = DataFeed.IEX if feed.lower() == "iex" else DataFeed.SIP
         self.client = StockHistoricalDataClient(api_key, api_secret)
         self.sector_map = self._load_sector_map()
     
     def _load_sector_map(self) -> Dict[str, str]:
-        """
-        Map common stocks to sectors for diversification
-        In production, use a proper sector API
-        """
+        """Map common stocks to sectors for diversification"""
         return {
             'AAPL': 'Technology', 'MSFT': 'Technology', 'GOOGL': 'Technology',
             'META': 'Technology', 'NVDA': 'Technology', 'AMD': 'Technology',
@@ -58,7 +59,7 @@ class StockScorer:
     def calculate_rsi(self, prices: List[float], period: int = 14) -> float:
         """Calculate Relative Strength Index"""
         if len(prices) < period + 1:
-            return 50.0  # Neutral
+            return 50.0
         
         deltas = [prices[i] - prices[i-1] for i in range(1, len(prices))]
         gains = [d if d > 0 else 0 for d in deltas]
@@ -79,15 +80,10 @@ class StockScorer:
         if len(prices) < 26:
             return 0, 0, 0
         
-        # Simple EMA approximation
         ema_12 = fmean(prices[-12:])
         ema_26 = fmean(prices[-26:])
         macd_line = ema_12 - ema_26
-        
-        # Signal line (9-period EMA of MACD)
-        # Simplified: just use last few MACD values
-        signal_line = macd_line * 0.9  # Approximation
-        
+        signal_line = macd_line * 0.9
         histogram = macd_line - signal_line
         
         return macd_line, signal_line, histogram
@@ -113,10 +109,7 @@ class StockScorer:
         return fmean(tr_list[-period:]) if tr_list else 0.0
     
     def technical_score(self, bars_df: pd.DataFrame) -> Tuple[float, str]:
-        """
-        Score: 0-40 points
-        Technical indicators: RSI, MACD, SMA positioning
-        """
+        """Score: 0-40 points - Technical indicators"""
         score = 0
         reasons = []
         
@@ -125,13 +118,13 @@ class StockScorer:
         
         # RSI (0-10 points)
         rsi = self.calculate_rsi(closes)
-        if 30 < rsi < 70:  # Buy zone
+        if 30 < rsi < 70:
             score += 10
             reasons.append(f"RSI {rsi:.1f} in buy zone")
-        elif rsi < 30:  # Oversold - potential bounce
+        elif rsi < 30:
             score += 7
             reasons.append(f"RSI {rsi:.1f} oversold")
-        elif rsi > 70:  # Overbought - risky
+        elif rsi > 70:
             score += 3
             reasons.append(f"RSI {rsi:.1f} overbought")
         
@@ -157,7 +150,7 @@ class StockScorer:
         # MACD (0-10 points)
         if len(closes) >= 26:
             macd_line, signal_line, histogram = self.calculate_macd(closes)
-            if histogram > 0:  # Bullish
+            if histogram > 0:
                 score += 10
                 reasons.append("MACD bullish")
             else:
@@ -166,10 +159,7 @@ class StockScorer:
         return score, " | ".join(reasons)
     
     def momentum_score(self, bars_df: pd.DataFrame) -> Tuple[float, str]:
-        """
-        Score: 0-25 points
-        Gap analysis and price momentum
-        """
+        """Score: 0-25 points - Gap analysis and momentum"""
         score = 0
         reasons = []
         
@@ -181,10 +171,10 @@ class StockScorer:
         
         # Gap percentage (0-15 points)
         gap = (current['open'] - previous['close']) / previous['close']
-        if gap > 0.05:  # 5% gap up
+        if gap > 0.05:
             score += 15
             reasons.append(f"Large gap up {gap*100:.1f}%")
-        elif gap > 0.02:  # 2% gap up
+        elif gap > 0.02:
             score += 10
             reasons.append(f"Gap up {gap*100:.1f}%")
         elif gap > 0:
@@ -193,7 +183,7 @@ class StockScorer:
         
         # Intraday momentum (0-10 points)
         intraday_change = (current['close'] - current['open']) / current['open']
-        if intraday_change > 0.02:  # 2% intraday gain
+        if intraday_change > 0.02:
             score += 10
             reasons.append(f"Strong intraday {intraday_change*100:.1f}%")
         elif intraday_change > 0:
@@ -203,10 +193,7 @@ class StockScorer:
         return score, " | ".join(reasons)
     
     def volume_score(self, bars_df: pd.DataFrame) -> Tuple[float, str]:
-        """
-        Score: 0-20 points
-        Volume analysis and trends
-        """
+        """Score: 0-20 points - Volume analysis"""
         score = 0
         reasons = []
         
@@ -219,13 +206,13 @@ class StockScorer:
         
         # Volume ratio (0-15 points)
         volume_ratio = current_volume / avg_volume if avg_volume > 0 else 0
-        if volume_ratio > 3:  # 3x volume
+        if volume_ratio > 3:
             score += 15
             reasons.append(f"Massive volume {volume_ratio:.1f}x")
-        elif volume_ratio > 2:  # 2x volume
+        elif volume_ratio > 2:
             score += 12
             reasons.append(f"High volume {volume_ratio:.1f}x")
-        elif volume_ratio > 1.5:  # 1.5x volume
+        elif volume_ratio > 1.5:
             score += 8
             reasons.append(f"Above avg volume {volume_ratio:.1f}x")
         elif volume_ratio > 1:
@@ -241,10 +228,7 @@ class StockScorer:
         return score, " | ".join(reasons)
     
     def volatility_score(self, bars_df: pd.DataFrame) -> Tuple[float, str]:
-        """
-        Score: 0-15 points
-        Movement potential and risk assessment
-        """
+        """Score: 0-15 points - Movement potential"""
         score = 0
         reasons = []
         
@@ -253,7 +237,7 @@ class StockScorer:
         
         current_price = bars_df.iloc[-1]['close']
         
-        # ATR (Average True Range) - movement potential
+        # ATR
         atr = self.calculate_atr(bars_df)
         atr_pct = (atr / current_price) * 100 if current_price > 0 else 0
         
@@ -273,30 +257,30 @@ class StockScorer:
         if len(closes) >= 20:
             sma = fmean(closes[-20:])
             std = stdev(closes[-20:])
-            
-            # Distance from middle band
             bb_position = (current_price - sma) / std if std > 0 else 0
             
-            if -1 < bb_position < 1:  # Near middle - good entry
+            if -1 < bb_position < 1:
                 score += 5
                 reasons.append("BB middle band")
-            elif bb_position < -2:  # Oversold
+            elif bb_position < -2:
                 score += 3
                 reasons.append("BB lower band")
         
         return score, " | ".join(reasons)
     
     def fetch_stock_data(self, symbol: str, days: int = 30) -> pd.DataFrame:
-        """Fetch historical data for a symbol"""
+        """Fetch historical data for a symbol - FIXED: Uses IEX feed"""
         try:
             end_date = datetime.now()
             start_date = end_date - timedelta(days=days)
             
+            # FIXED: Specify feed parameter
             request = StockBarsRequest(
                 symbol_or_symbols=symbol,
                 timeframe=TimeFrame.Day,
                 start=start_date,
-                end=end_date
+                end=end_date,
+                feed=self.feed  # ADDED: Use IEX feed
             )
             
             bars = self.client.get_stock_bars(request)
@@ -314,7 +298,6 @@ class StockScorer:
     def score_stock(self, symbol: str) -> ScoredStock:
         """Calculate comprehensive score for a single stock"""
         
-        # Fetch data
         bars_df = self.fetch_stock_data(symbol)
         
         if len(bars_df) < 20:
@@ -330,27 +313,22 @@ class StockScorer:
                 reason="Insufficient data"
             )
         
-        # Calculate component scores
         tech_score, tech_reason = self.technical_score(bars_df)
         mom_score, mom_reason = self.momentum_score(bars_df)
         vol_score, vol_reason = self.volume_score(bars_df)
         volatility, volatility_reason = self.volatility_score(bars_df)
         
-        # Weighted total (out of 100)
         total = (
-            tech_score * 1.0 +      # 40 points max
-            mom_score * 1.0 +       # 25 points max
-            vol_score * 1.0 +       # 20 points max
-            volatility * 1.0        # 15 points max
+            tech_score * 1.0 +
+            mom_score * 1.0 +
+            vol_score * 1.0 +
+            volatility * 1.0
         )
         
-        # Bonus: Multiple factors highly aligned
         if tech_score > 30 and mom_score > 18 and vol_score > 12:
-            total += 10  # High conviction bonus
+            total += 10
         
         current = bars_df.iloc[-1]
-        
-        # Compile reasons
         all_reasons = [r for r in [tech_reason, mom_reason, vol_reason, volatility_reason] if r]
         
         return ScoredStock(
@@ -367,11 +345,9 @@ class StockScorer:
         )
     
     def screen_and_rank(self, symbols: List[str], min_score: float = 60) -> List[ScoredStock]:
-        """
-        Screen all symbols and return ranked list
-        """
+        """Screen all symbols and return ranked list"""
         print(f"\n{'='*80}")
-        print(f"🔍 SCREENING {len(symbols)} STOCKS")
+        print(f"🔍 SCREENING {len(symbols)} STOCKS (using {self.feed.name} feed)")
         print(f"{'='*80}\n")
         
         scored_stocks = []
@@ -382,7 +358,6 @@ class StockScorer:
             try:
                 scored = self.score_stock(symbol)
                 
-                # Pre-filter: minimum requirements
                 if (scored.total_score >= min_score and 
                     scored.price > 5 and 
                     scored.volume > 100000):
@@ -392,17 +367,13 @@ class StockScorer:
                 print(f"\n⚠️ Error scoring {symbol}: {e}")
                 continue
         
-        print("\n")  # Clear the progress line
-        
-        # Sort by total score
+        print("\n")
         scored_stocks.sort(key=lambda x: x.total_score, reverse=True)
         
         return scored_stocks
     
     def select_top_3(self, scored_stocks: List[ScoredStock]) -> List[ScoredStock]:
-        """
-        Select top 3 with sector diversification
-        """
+        """Select top 3 with sector diversification"""
         if len(scored_stocks) <= 3:
             return scored_stocks
         
@@ -410,12 +381,10 @@ class StockScorer:
         sectors_used = set()
         
         for stock in scored_stocks:
-            # Prefer diversity, but don't be too strict
             if stock.sector not in sectors_used or len(selected) == 0:
                 selected.append(stock)
                 sectors_used.add(stock.sector)
             elif len(selected) < 3:
-                # If we're struggling to diversify, just take best scores
                 selected.append(stock)
             
             if len(selected) == 3:
@@ -424,7 +393,7 @@ class StockScorer:
         return selected
     
     def print_results(self, stocks: List[ScoredStock], title: str = "Top Stocks"):
-        """Print scoring results in a formatted table"""
+        """Print scoring results"""
         if not stocks:
             print(f"\n{title}: No qualifying stocks found")
             return
@@ -444,46 +413,3 @@ class StockScorer:
             print()
         
         print(f"{'='*100}\n")
-
-
-def main():
-    """Example usage"""
-    from config import settings
-    
-    # Popular NASDAQ stocks to screen
-    # In production, you'd get full NASDAQ list from an API
-    nasdaq_symbols = [
-        'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META', 'TSLA', 'NVDA', 'AMD',
-        'NFLX', 'INTC', 'CSCO', 'ADBE', 'PYPL', 'CMCSA', 'PEP', 'AVGO',
-        'TXN', 'QCOM', 'COST', 'SBUX', 'AMGN', 'INTU', 'ISRG', 'BKNG',
-        'ADP', 'GILD', 'MDLZ', 'VRTX', 'REGN', 'LRCX', 'ATVI', 'MNST',
-        'ASML', 'MU', 'AMAT', 'ADI', 'KLAC', 'MELI', 'NXPI', 'SNPS',
-        'MAR', 'ABNB', 'CDNS', 'ORLY', 'MRVL', 'LULU', 'CRWD', 'FTNT',
-        'DXCM', 'PANW', 'WDAY', 'TEAM', 'DDOG', 'ZS', 'SNOW', 'COIN'
-    ]
-    
-    scorer = StockScorer(settings.alpaca_key, settings.alpaca_secret)
-    
-    # Screen all stocks
-    scored_stocks = scorer.screen_and_rank(nasdaq_symbols, min_score=60)
-    
-    # Show all qualifying stocks
-    scorer.print_results(scored_stocks, f"All Stocks Scoring 60+ ({len(scored_stocks)} found)")
-    
-    # Select top 3 with diversification
-    top_3 = scorer.select_top_3(scored_stocks)
-    scorer.print_results(top_3, "🏆 TOP 3 SELECTIONS")
-    
-    # Return symbols for trading
-    if top_3:
-        symbols = [s.symbol for s in top_3]
-        print(f"✅ Recommended symbols for trading: {', '.join(symbols)}")
-        print(f"   Add these to your config: SYMBOLS={','.join(symbols)}")
-        return symbols
-    else:
-        print("⚠️ No stocks met the criteria")
-        return []
-
-
-if __name__ == "__main__":
-    main()
