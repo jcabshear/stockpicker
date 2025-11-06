@@ -4,25 +4,29 @@ from typing import List
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
+from alpaca.data.enums import DataFeed  # ADDED: Import DataFeed
 from strategy import BaseStrategy, Position
 
 
 class Backtester:
     """Backtest trading strategies"""
     
-    def __init__(self, api_key: str, api_secret: str, initial_capital: float = 100000):
+    def __init__(self, api_key: str, api_secret: str, initial_capital: float = 100000, feed: str = "iex"):
         self.client = StockHistoricalDataClient(api_key, api_secret)
         self.initial_capital = initial_capital
         self.results = None
+        # ADDED: Store feed preference
+        self.feed = DataFeed.IEX if feed.lower() == "iex" else DataFeed.SIP
     
     def fetch_data(self, symbols: List[str], start_date: datetime, 
                    end_date: datetime, timeframe: TimeFrame = TimeFrame.Minute) -> pd.DataFrame:
-        """Fetch historical data"""
+        """Fetch historical data - FIXED: Uses IEX feed"""
         request = StockBarsRequest(
             symbol_or_symbols=symbols,
             timeframe=timeframe,
             start=start_date,
-            end=end_date
+            end=end_date,
+            feed=self.feed  # ADDED: Use IEX feed
         )
         
         bars = self.client.get_stock_bars(request)
@@ -151,7 +155,7 @@ class Backtester:
         trades_df = pd.DataFrame(trades)
         equity_df = pd.DataFrame(equity_curve)
         
-        final_value = equity_df['equity'].iloc[-1]
+        final_value = equity_df['equity'].iloc[-1] if len(equity_df) > 0 else self.initial_capital
         total_return = (final_value - self.initial_capital) / self.initial_capital
         
         winning_trades = trades_df[trades_df['pnl'] > 0] if len(trades_df) > 0 else pd.DataFrame()
@@ -164,7 +168,7 @@ class Backtester:
         
         # Sharpe ratio (simplified)
         returns = equity_df['equity'].pct_change().dropna()
-        sharpe = (returns.mean() / returns.std()) * (252 ** 0.5) if len(returns) > 0 else 0
+        sharpe = (returns.mean() / returns.std()) * (252 ** 0.5) if len(returns) > 0 and returns.std() > 0 else 0
         
         # Max drawdown
         cummax = equity_df['equity'].cummax()
