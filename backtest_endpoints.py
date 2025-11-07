@@ -1,12 +1,15 @@
 """
 Backtest API Endpoints Module
-Separate module for comprehensive backtesting endpoints
+Includes SSE streaming for real-time progress updates
 """
 
 import logging
+import json
+import asyncio
 from datetime import datetime, timedelta
-from typing import Optional, List
-from fastapi import APIRouter, HTTPException
+from typing import Optional, List, AsyncGenerator
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from config import settings
@@ -34,11 +37,193 @@ class ComprehensiveBacktestParams(BaseModel):
     stock_universe: Optional[List[str]] = None
 
 
+# ============================================================================
+# SSE STREAMING ENDPOINT (NEW - Real-time Progress)
+# ============================================================================
+
+@router.get("/comprehensive-backtest-stream")
+async def comprehensive_backtest_stream(
+    screener_model: str = Query(...),
+    day_model: str = Query(...),
+    top_n_stocks: int = Query(...),
+    min_score: float = Query(...),
+    days: int = Query(...),
+    initial_capital: float = Query(...),
+    force_execution: bool = Query(False),
+    stock_universe: Optional[str] = Query(None)
+):
+    """
+    Stream comprehensive backtest progress using Server-Sent Events (SSE)
+    Provides real-time updates as the backtest runs
+    """
+    
+    async def generate_progress() -> AsyncGenerator[str, None]:
+        """Generate SSE progress updates"""
+        try:
+            # Initial connection
+            yield f"data: {json.dumps({'type': 'progress', 'percent': 0, 'message': 'Initializing backtester...', 'detail': 'Loading configuration and models'})}\n\n"
+            await asyncio.sleep(0.1)
+            
+            logger.info(f"🚀 Starting SSE backtest: {screener_model} + {day_model}")
+            
+            # Create backtester
+            backtester = IntegratedBacktester(
+                api_key=settings.alpaca_key,
+                api_secret=settings.alpaca_secret,
+                initial_capital=initial_capital
+            )
+            
+            # Calculate date range
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=days)
+            
+            # Get stock universe
+            if stock_universe:
+                universe = stock_universe.split(',')
+            elif screener_model == 'manual':
+                raise HTTPException(400, "Manual selection requires stock_universe parameter")
+            else:
+                universe = get_full_universe()
+            
+            yield f"data: {json.dumps({'type': 'progress', 'percent': 2, 'message': f'Universe: {len(universe)} stocks', 'detail': f'Backtesting from {start_date.date()} to {end_date.date()}'})}\n\n"
+            await asyncio.sleep(0.1)
+            
+            logger.info(f"📊 Backtest params: {days} days, {len(universe)} stocks, top {top_n_stocks}")
+            
+            # Progress callback for detailed updates
+            async def stream_progress(message: str, progress_pct: int, detail: str = ""):
+                """Send progress update via SSE"""
+                update_data = {
+                    'type': 'progress',
+                    'percent': progress_pct,
+                    'message': message,
+                    'detail': detail
+                }
+                yield f"data: {json.dumps(update_data)}\n\n"
+                await asyncio.sleep(0.05)  # Small delay to prevent overwhelming client
+                logger.info(f"[{progress_pct}%] {message}")
+            
+            # Run backtest with streaming progress
+            # Note: We need to make the backtester run async-compatible
+            yield f"data: {json.dumps({'type': 'progress', 'percent': 5, 'message': 'Pre-fetching historical data...', 'detail': f'Bulk loading {len(universe)} stocks (much faster!)'})}\n\n"
+            await asyncio.sleep(0.1)
+            
+            # Run backtest in thread pool to avoid blocking
+            import concurrent.futures
+            loop = asyncio.get_event_loop()
+            
+            # Create a queue for progress updates
+            progress_queue = asyncio.Queue()
+            
+            def sync_progress_callback(message: str, progress_pct: int):
+                """Sync callback that puts updates in async queue"""
+                loop.call_soon_threadsafe(
+                    progress_queue.put_nowait,
+                    {'message': message, 'percent': progress_pct}
+                )
+            
+            # Run backtest in executor
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                backtest_future = loop.run_in_executor(
+                    executor,
+                    backtester.run,
+                    screener_model,
+                    {},  # screener_params
+                    day_model,
+                    {},  # day_model_params
+                    start_date,
+                    end_date,
+                    universe,
+                    top_n_stocks,
+                    min_score,
+                    force_execution,
+                    sync_progress_callback
+                )
+                
+                # Stream progress updates while backtest runs
+                while not backtest_future.done():
+                    try:
+                        update = await asyncio.wait_for(progress_queue.get(), timeout=1.0)
+                        yield f"data: {json.dumps({'type': 'progress', 'percent': update['percent'], 'message': update['message'], 'detail': ''})}\n\n"
+                    except asyncio.TimeoutError:
+                        # No update in last second, continue waiting
+                        continue
+                
+                # Get final results
+                results = await backtest_future
+            
+            # Drain remaining progress updates
+            while not progress_queue.empty():
+                update = await progress_queue.get()
+                yield f"data: {json.dumps({'type': 'progress', 'percent': update['percent'], 'message': update['message'], 'detail': ''})}\n\n"
+            
+            # Format trades for JSON
+            trades_list = []
+            if 'trades' in results:
+                for trade in results['trades'][:100]:  # Limit to 100 trades
+                    trades_list.append({
+                        'symbol': trade['symbol'],
+                        'action': trade['action'],
+                        'shares': trade['shares'],
+                        'price': trade['price'],
+                        'timestamp': trade['timestamp'].isoformat() if hasattr(trade['timestamp'], 'isoformat') else str(trade['timestamp']),
+                        'reason': trade['reason'],
+                        'pnl': trade['pnl'],
+                        'pnl_pct': trade['pnl_pct'] * 100
+                    })
+            
+            # Prepare final results
+            final_results = {
+                'status': 'success',
+                'strategy': results['strategy'],
+                'initial_capital': results['initial_capital'],
+                'final_value': results['final_value'],
+                'total_return_pct': results['total_return_pct'],
+                'total_trades': results['total_trades'],
+                'winning_trades': results['winning_trades'],
+                'losing_trades': results['losing_trades'],
+                'win_rate': results['win_rate'] * 100,
+                'avg_win': results['avg_win'],
+                'avg_loss': results['avg_loss'],
+                'profit_factor': results['profit_factor'],
+                'trades': trades_list,
+                'unique_stocks_traded': results['unique_stocks_traded'],
+                'screening_sessions': results['screening_sessions']
+            }
+            
+            # Send completion event
+            yield f"data: {json.dumps({'type': 'complete', 'percent': 100, 'message': 'Backtest complete!', 'results': final_results})}\n\n"
+            
+            logger.info(f"✅ SSE Backtest complete: {results['total_return_pct']:.2f}% return")
+            
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"❌ SSE Backtest failed: {error_msg}")
+            import traceback
+            traceback.print_exc()
+            yield f"data: {json.dumps({'type': 'error', 'message': error_msg})}\n\n"
+    
+    return StreamingResponse(
+        generate_progress(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+            "Access-Control-Allow-Origin": "*"  # CORS for SSE
+        }
+    )
+
+
+# ============================================================================
+# LEGACY POST ENDPOINT (Kept for backward compatibility)
+# ============================================================================
+
 @router.post("/comprehensive-backtest")
 async def run_comprehensive_backtest(params: ComprehensiveBacktestParams):
     """
     Run comprehensive backtest with daily screening + intraday trading
-    Includes progress logging for monitoring
+    (Legacy endpoint - returns results all at once)
     """
     try:
         logger.info(f"🚀 Starting comprehensive backtest: {params.screener_model} + {params.day_model}")
@@ -81,7 +266,7 @@ async def run_comprehensive_backtest(params: ComprehensiveBacktestParams):
             top_n=params.top_n_stocks,
             min_score=params.min_score,
             force_execution=params.force_execution,
-            progress_callback=log_progress  # ✅ Progress tracking
+            progress_callback=log_progress
         )
         
         # Format trades for JSON

@@ -1,6 +1,6 @@
 """
-Enhanced Backtest Page with Progress Tracking
-Complete HTML page with real-time progress updates
+Enhanced Backtest Page with Real-Time SSE Progress Tracking
+Complete HTML page with Server-Sent Events for live updates
 """
 
 ENHANCED_BACKTEST_HTML = """
@@ -168,7 +168,7 @@ ENHANCED_BACKTEST_HTML = """
         }
         
         .status-log {
-            max-height: 200px;
+            max-height: 300px;
             overflow-y: auto;
             background: #f8f9fa;
             border-radius: 8px;
@@ -179,13 +179,41 @@ ENHANCED_BACKTEST_HTML = """
         }
         
         .status-log div {
-            margin-bottom: 5px;
-            color: #555;
+            padding: 4px 0;
+            border-bottom: 1px solid #e9ecef;
         }
         
-        .status-log div.info { color: #0066cc; }
-        .status-log div.success { color: #28a745; }
-        .status-log div.error { color: #dc3545; }
+        .status-log div:last-child {
+            border-bottom: none;
+        }
+        
+        .status-log .info {
+            color: #0066cc;
+        }
+        
+        .status-log .detail {
+            color: #6c757d;
+            font-size: 11px;
+            padding-left: 20px;
+            border-left: 2px solid #e9ecef;
+            margin-left: 10px;
+            margin-top: 2px;
+        }
+        
+        .status-log .success {
+            color: #28a745;
+            font-weight: 600;
+        }
+        
+        .status-log .error {
+            color: #dc3545;
+            font-weight: 600;
+        }
+        
+        .status-log .warning {
+            color: #ffc107;
+            font-weight: 600;
+        }
         
         /* Results Section */
         .results-section {
@@ -199,57 +227,46 @@ ENHANCED_BACKTEST_HTML = """
         .metrics-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
+            gap: 20px;
             margin-bottom: 30px;
         }
         
-        .metric {
-            background: #f8f9fa;
+        .metric-card {
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
             padding: 20px;
             border-radius: 10px;
+            text-align: center;
         }
         
         .metric-label {
             font-size: 12px;
-            color: #888;
+            color: #666;
             text-transform: uppercase;
-            margin-bottom: 5px;
+            letter-spacing: 1px;
+            margin-bottom: 8px;
         }
         
         .metric-value {
             font-size: 28px;
-            font-weight: bold;
+            font-weight: 700;
             color: #333;
         }
         
-        .metric-value.positive { color: #28a745; }
-        .metric-value.negative { color: #dc3545; }
-        
-        .stats-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 20px;
+        .metric-value.positive {
+            color: #28a745;
         }
         
-        .stat-group h3 {
-            font-size: 18px;
-            margin-bottom: 15px;
-            color: #667eea;
+        .metric-value.negative {
+            color: #dc3545;
         }
         
-        .stat-group p {
-            margin-bottom: 10px;
-            font-size: 14px;
+        .publish-button {
+            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+            margin-top: 20px;
         }
         
-        .stat-group strong {
-            color: #333;
-        }
-        
-        @media (max-width: 768px) {
-            .grid-2, .stats-grid {
-                grid-template-columns: 1fr;
-            }
+        .publish-button:hover:not(:disabled) {
+            box-shadow: 0 5px 20px rgba(17, 153, 142, 0.4);
         }
     </style>
 </head>
@@ -257,58 +274,62 @@ ENHANCED_BACKTEST_HTML = """
     <div class="container">
         <header>
             <a href="/" class="back-link">← Back to Dashboard</a>
-            <h1>🧪 Backtest Your Strategy</h1>
-            <p>Test your trading strategy on historical data before going live</p>
+            <h1>🧪 Comprehensive Backtest</h1>
+            <p>Test strategies with historical data before going live</p>
         </header>
         
+        <!-- Configuration Form -->
         <div class="card">
-            <h2>Configuration</h2>
+            <h2>Backtest Configuration</h2>
             
             <div class="grid-2">
                 <div class="form-group">
-                    <label>Screening Model</label>
+                    <label for="screenerModel">Screening Model</label>
                     <select id="screenerModel">
-                        <option value="technical_momentum">Technical Momentum</option>
                         <option value="gap_volatility">Gap & Volatility</option>
+                        <option value="technical_momentum">Technical Momentum</option>
                         <option value="trend_strength">Trend Strength</option>
-                        <option value="manual">Manual Selection</option>
                     </select>
                 </div>
                 
                 <div class="form-group">
-                    <label>Day Trading Model</label>
+                    <label for="dayModel">Day Trading Model</label>
                     <select id="dayModel">
                         <option value="ma_crossover">MA Crossover</option>
-                        <option value="pattern_recognition">Pattern Recognition</option>
-                        <option value="vwap_bounce">VWAP Bounce</option>
+                        <option value="vwap_mean_reversion">VWAP Mean Reversion</option>
+                        <option value="momentum_breakout">Momentum Breakout</option>
                     </select>
                 </div>
-                
+            </div>
+            
+            <div class="grid-2">
                 <div class="form-group">
-                    <label>Days to Backtest</label>
-                    <input type="number" id="days" value="30" min="1" max="90">
-                </div>
-                
-                <div class="form-group">
-                    <label>Initial Capital ($)</label>
-                    <input type="number" id="initialCapital" value="10000" min="1000" step="1000">
-                </div>
-                
-                <div class="form-group">
-                    <label>Top N Stocks Per Day</label>
+                    <label for="topN">Top N Stocks per Day</label>
                     <input type="number" id="topN" value="3" min="1" max="10">
                 </div>
                 
                 <div class="form-group">
-                    <label>Minimum Score</label>
+                    <label for="minScore">Minimum Score</label>
                     <input type="number" id="minScore" value="60" min="0" max="100">
+                </div>
+            </div>
+            
+            <div class="grid-2">
+                <div class="form-group">
+                    <label for="days">Days to Test</label>
+                    <input type="number" id="days" value="30" min="1" max="90">
+                </div>
+                
+                <div class="form-group">
+                    <label for="initialCapital">Initial Capital ($)</label>
+                    <input type="number" id="initialCapital" value="10000" min="1000" step="1000">
                 </div>
             </div>
             
             <div class="form-group">
                 <label>
-                    <input type="checkbox" id="forceExecution" style="width: auto; margin-right: 10px;">
-                    Force Execution (ignore confidence thresholds)
+                    <input type="checkbox" id="forceExecution">
+                    Force execution even if confidence is low
                 </label>
             </div>
             
@@ -317,7 +338,7 @@ ENHANCED_BACKTEST_HTML = """
         
         <!-- Progress Section -->
         <div class="card progress-section" id="progressSection">
-            <h2>Progress</h2>
+            <h2>⏳ Backtest in Progress</h2>
             
             <div class="progress-bar-container">
                 <div class="progress-bar" id="progressBar">0%</div>
@@ -327,55 +348,80 @@ ENHANCED_BACKTEST_HTML = """
                 Initializing...
             </div>
             
+            <h3 style="margin-top: 20px; margin-bottom: 10px;">Activity Log</h3>
             <div class="status-log" id="statusLog"></div>
         </div>
         
         <!-- Results Section -->
         <div class="card results-section" id="resultsSection">
-            <h2>Results</h2>
+            <h2>📊 Backtest Results</h2>
             
             <div class="metrics-grid">
-                <div class="metric">
+                <div class="metric-card">
                     <div class="metric-label">Initial Capital</div>
-                    <div class="metric-value" id="initialCapitalResult">-</div>
+                    <div class="metric-value" id="initialCapitalResult">$0</div>
                 </div>
-                <div class="metric">
+                <div class="metric-card">
                     <div class="metric-label">Final Value</div>
-                    <div class="metric-value" id="finalValue">-</div>
+                    <div class="metric-value" id="finalValue">$0</div>
                 </div>
-                <div class="metric">
+                <div class="metric-card">
                     <div class="metric-label">Total Return</div>
-                    <div class="metric-value" id="totalReturn">-</div>
+                    <div class="metric-value" id="totalReturn">0%</div>
                 </div>
-                <div class="metric">
+                <div class="metric-card">
                     <div class="metric-label">Win Rate</div>
-                    <div class="metric-value" id="winRate">-</div>
+                    <div class="metric-value" id="winRate">0%</div>
                 </div>
             </div>
             
-            <div class="stats-grid">
-                <div class="stat-group">
-                    <h3>Trade Statistics</h3>
-                    <p><strong>Total Trades:</strong> <span id="totalTrades">0</span></p>
-                    <p><strong>Winning Trades:</strong> <span id="winningTrades">0</span></p>
-                    <p><strong>Losing Trades:</strong> <span id="losingTrades">0</span></p>
-                    <p><strong>Profit Factor:</strong> <span id="profitFactor">0</span></p>
+            <div class="metrics-grid">
+                <div class="metric-card">
+                    <div class="metric-label">Total Trades</div>
+                    <div class="metric-value" id="totalTrades">0</div>
                 </div>
-                
-                <div class="stat-group">
-                    <h3>Additional Info</h3>
-                    <p><strong>Strategy:</strong> <span id="strategy">-</span></p>
-                    <p><strong>Unique Stocks:</strong> <span id="uniqueStocks">0</span></p>
-                    <p><strong>Sessions:</strong> <span id="screeningSessions">0</span></p>
-                    <p><strong>Avg Win:</strong> $<span id="avgWin">0</span></p>
-                    <p><strong>Avg Loss:</strong> $<span id="avgLoss">0</span></p>
+                <div class="metric-card">
+                    <div class="metric-label">Winning Trades</div>
+                    <div class="metric-value positive" id="winningTrades">0</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Losing Trades</div>
+                    <div class="metric-value negative" id="losingTrades">0</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Profit Factor</div>
+                    <div class="metric-value" id="profitFactor">0.00</div>
                 </div>
             </div>
+            
+            <div class="metrics-grid">
+                <div class="metric-card">
+                    <div class="metric-label">Strategy</div>
+                    <div class="metric-value" style="font-size: 18px;" id="strategy">-</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Unique Stocks</div>
+                    <div class="metric-value" id="uniqueStocks">0</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Avg Win</div>
+                    <div class="metric-value positive" id="avgWin">$0</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Avg Loss</div>
+                    <div class="metric-value negative" id="avgLoss">$0</div>
+                </div>
+            </div>
+            
+            <button class="button publish-button" id="publishButton">
+                ✅ Publish to Live Trading
+            </button>
         </div>
     </div>
     
     <script>
         const runButton = document.getElementById('runBacktest');
+        const publishButton = document.getElementById('publishButton');
         const progressSection = document.getElementById('progressSection');
         const resultsSection = document.getElementById('resultsSection');
         const progressBar = document.getElementById('progressBar');
@@ -383,14 +429,16 @@ ENHANCED_BACKTEST_HTML = """
         const statusLog = document.getElementById('statusLog');
         
         let logEntries = [];
+        let currentEventSource = null;
+        let lastBacktestConfig = null;
         
         function addLog(message, type = 'info') {
             const timestamp = new Date().toLocaleTimeString();
             const entry = `[${timestamp}] ${message}`;
             logEntries.push({ message: entry, type });
             
-            // Keep last 50 entries
-            if (logEntries.length > 50) {
+            // Keep last 100 entries
+            if (logEntries.length > 100) {
                 logEntries.shift();
             }
             
@@ -432,13 +480,13 @@ ENHANCED_BACKTEST_HTML = """
             document.getElementById('profitFactor').textContent = data.profit_factor.toFixed(2);
             document.getElementById('strategy').textContent = data.strategy;
             document.getElementById('uniqueStocks').textContent = data.unique_stocks_traded;
-            document.getElementById('screeningSessions').textContent = data.screening_sessions;
-            document.getElementById('avgWin').textContent = Math.abs(data.avg_win).toFixed(2);
-            document.getElementById('avgLoss').textContent = Math.abs(data.avg_loss).toFixed(2);
+            document.getElementById('avgWin').textContent = `$${Math.abs(data.avg_win).toFixed(2)}`;
+            document.getElementById('avgLoss').textContent = `$${Math.abs(data.avg_loss).toFixed(2)}`;
             
-            addLog('Backtest complete!', 'success');
+            addLog('✅ Backtest complete!', 'success');
         }
         
+        // Main backtest execution with SSE
         runButton.addEventListener('click', async () => {
             // Disable button
             runButton.disabled = true;
@@ -448,7 +496,7 @@ ENHANCED_BACKTEST_HTML = """
             logEntries = [];
             progressSection.classList.add('active');
             resultsSection.classList.remove('active');
-            updateProgress(0, 'Starting backtest...');
+            updateProgress(0, 'Connecting to backtest stream...');
             
             // Gather parameters
             const params = {
@@ -463,49 +511,146 @@ ENHANCED_BACKTEST_HTML = """
                 initial_capital: parseFloat(document.getElementById('initialCapital').value)
             };
             
+            // Store config for publishing later
+            lastBacktestConfig = params;
+            
             try {
-                addLog('Sending backtest request...', 'info');
-                updateProgress(5, 'Initializing backtester...');
+                addLog('Establishing SSE connection...', 'info');
                 
-                const response = await fetch('/api/comprehensive-backtest', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(params)
+                // Build query string
+                const queryParams = new URLSearchParams({
+                    screener_model: params.screener_model,
+                    day_model: params.day_model,
+                    top_n_stocks: params.top_n_stocks,
+                    min_score: params.min_score,
+                    days: params.days,
+                    initial_capital: params.initial_capital,
+                    force_execution: params.force_execution
                 });
                 
-                if (!response.ok) {
-                    const errorData = await response.json();
-                    throw new Error(errorData.detail || `HTTP ${response.status}`);
-                }
+                // Create EventSource for Server-Sent Events
+                currentEventSource = new EventSource(`/api/comprehensive-backtest-stream?${queryParams}`);
                 
-                // Simulate progress (in production, you could poll for progress or use SSE)
-                updateProgress(25, 'Fetching historical data...');
-                await new Promise(resolve => setTimeout(resolve, 500));
+                currentEventSource.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        
+                        if (data.type === 'progress') {
+                            // Update progress bar and main message
+                            updateProgress(data.percent, data.message);
+                            
+                            // Add detailed info to log
+                            if (data.detail) {
+                                addLog(data.detail, 'detail');
+                            }
+                            
+                        } else if (data.type === 'complete') {
+                            // Backtest finished successfully
+                            updateProgress(100, 'Backtest complete!');
+                            addLog('✅ Backtest completed successfully', 'success');
+                            
+                            // Close connection
+                            currentEventSource.close();
+                            currentEventSource = null;
+                            
+                            // Show results
+                            if (data.results) {
+                                showResults(data.results);
+                            }
+                            
+                            // Re-enable button
+                            runButton.disabled = false;
+                            runButton.textContent = 'Run Backtest';
+                            
+                        } else if (data.type === 'error') {
+                            // Error occurred
+                            addLog(`❌ Error: ${data.message}`, 'error');
+                            statusMessage.textContent = `Error: ${data.message}`;
+                            statusMessage.style.background = '#fee2e2';
+                            statusMessage.style.borderColor = '#dc3545';
+                            
+                            // Close connection
+                            if (currentEventSource) {
+                                currentEventSource.close();
+                                currentEventSource = null;
+                            }
+                            
+                            // Re-enable button
+                            runButton.disabled = false;
+                            runButton.textContent = 'Run Backtest';
+                            
+                            alert(`Backtest failed: ${data.message}`);
+                        }
+                        
+                    } catch (parseError) {
+                        console.error('Error parsing SSE data:', parseError);
+                        addLog(`Parse error: ${parseError.message}`, 'error');
+                    }
+                };
                 
-                updateProgress(50, 'Running simulation...');
-                await new Promise(resolve => setTimeout(resolve, 500));
-                
-                updateProgress(75, 'Analyzing results...');
-                
-                const data = await response.json();
-                
-                if (data.status === 'success') {
-                    updateProgress(100, 'Complete!');
-                    await new Promise(resolve => setTimeout(resolve, 500));
-                    showResults(data);
-                } else {
-                    throw new Error(data.message || 'Backtest failed');
-                }
+                currentEventSource.onerror = (error) => {
+                    console.error('SSE connection error:', error);
+                    addLog('⚠️ Connection error. Reconnecting...', 'warning');
+                    
+                    // SSE will auto-reconnect, but if it fails completely, clean up
+                    setTimeout(() => {
+                        if (currentEventSource && currentEventSource.readyState === EventSource.CLOSED) {
+                            addLog('❌ Connection failed. Please try again.', 'error');
+                            runButton.disabled = false;
+                            runButton.textContent = 'Run Backtest';
+                            currentEventSource = null;
+                        }
+                    }, 5000);
+                };
                 
             } catch (error) {
+                console.error('Error starting backtest:', error);
                 addLog(`Error: ${error.message}`, 'error');
                 statusMessage.textContent = `Error: ${error.message}`;
                 statusMessage.style.background = '#fee2e2';
                 statusMessage.style.borderColor = '#dc3545';
                 alert(`Backtest failed: ${error.message}`);
-            } finally {
+                
                 runButton.disabled = false;
                 runButton.textContent = 'Run Backtest';
+            }
+        });
+        
+        // Publish to live trading
+        publishButton.addEventListener('click', async () => {
+            if (!confirm('Publish this backtest configuration to live trading?')) {
+                return;
+            }
+            
+            publishButton.disabled = true;
+            publishButton.textContent = 'Publishing...';
+            
+            try {
+                const response = await fetch('/api/publish-backtest', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(lastBacktestConfig)
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                
+                const data = await response.json();
+                alert('✅ Configuration published to live trading!');
+                
+            } catch (error) {
+                alert(`Failed to publish: ${error.message}`);
+            } finally {
+                publishButton.disabled = false;
+                publishButton.textContent = '✅ Publish to Live Trading';
+            }
+        });
+        
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => {
+            if (currentEventSource) {
+                currentEventSource.close();
             }
         });
     </script>
