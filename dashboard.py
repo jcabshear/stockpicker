@@ -1,42 +1,28 @@
 """
-Dashboard HTML Templates
-Complete dashboard.py with comprehensive backtesting
+Enhanced Dashboard with Position Details Modal
 """
 
-# Import the enhanced backtest HTML
-import sys
-sys.path.insert(0, '/home/claude')
-
-# Main dashboard HTML (unchanged from original)
-MAIN_DASHBOARD_HTML = """
+ENHANCED_DASHBOARD_HTML = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Trading Dashboard</title>
+    <title>Trading Dashboard - Enhanced</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        * { 
-            margin: 0; 
-            padding: 0; 
-            box-sizing: border-box; 
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         
         body {
             font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: #1a1a2e;
             min-height: 100vh;
-            padding: 0;
         }
         
-        .container { 
-            max-width: 1400px; 
-            margin: 0 auto;
-            padding: 0;
-        }
+        .container { max-width: 1400px; margin: 0 auto; }
         
-        /* Header */
+        /* Header - same as before */
         .header {
             background: rgba(255, 255, 255, 0.98);
             backdrop-filter: blur(20px);
@@ -56,15 +42,7 @@ MAIN_DASHBOARD_HTML = """
         .logo-section h1 { 
             font-size: 28px;
             font-weight: 700;
-            letter-spacing: -0.5px;
             color: #1a1a2e;
-            margin-bottom: 4px;
-        }
-        
-        .tagline {
-            font-size: 14px;
-            color: #666;
-            font-weight: 400;
         }
         
         .header-actions {
@@ -82,626 +60,664 @@ MAIN_DASHBOARD_HTML = """
             color: white;
             border: none;
             border-radius: 20px;
-            font-weight: 600;
-            font-size: 14px;
-            cursor: pointer;
-            transition: all 0.3s;
             text-decoration: none;
-        }
-        
-        .settings-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
-        }
-        
-        .status-section {
-            display: flex;
-            gap: 12px;
-            align-items: center;
-        }
-        
-        .status-badge {
-            display: inline-flex;
-            align-items: center;
-            padding: 8px 16px;
-            border-radius: 20px;
-            font-weight: 600;
-            font-size: 13px;
-            letter-spacing: 0.3px;
-            transition: all 0.3s;
-        }
-        
-        .status-badge::before {
-            content: '';
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            margin-right: 8px;
-            animation: pulse 2s ease-in-out infinite;
-        }
-        
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
-        }
-        
-        .status-running { 
-            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-            color: white; 
-        }
-        .status-running::before { background: white; }
-        
-        .status-disabled { 
-            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
-            color: white; 
-        }
-        .status-disabled::before { background: white; }
-        
-        .status-auto { 
-            background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
-            color: white; 
-        }
-        .status-auto::before { background: white; }
-        
-        /* Toggle Switch */
-        .toggle-container {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            background: rgba(255, 255, 255, 0.95);
-            padding: 12px 20px;
-            border-radius: 24px;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-        }
-        
-        .toggle-label {
-            font-weight: 600;
-            font-size: 14px;
-            color: #374151;
-        }
-        
-        .toggle-switch {
-            position: relative;
-            width: 56px;
-            height: 28px;
             cursor: pointer;
         }
         
-        .toggle-switch input {
-            opacity: 0;
-            width: 0;
-            height: 0;
-        }
-        
-        .toggle-slider {
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: #cbd5e1;
-            border-radius: 28px;
-            transition: all 0.3s;
-        }
-        
-        .toggle-slider:before {
-            content: '';
-            position: absolute;
-            height: 20px;
-            width: 20px;
-            left: 4px;
-            bottom: 4px;
-            background: white;
-            border-radius: 50%;
-            transition: all 0.3s;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-        }
-        
-        .toggle-switch input:checked + .toggle-slider {
-            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-        }
-        
-        .toggle-switch input:checked + .toggle-slider:before {
-            transform: translateX(28px);
-        }
-        
-        /* Main Content */
+        /* Main content */
         .main-content {
+            max-width: 1400px;
+            margin: 0 auto;
             padding: 32px 40px;
         }
         
-        /* Account Stats Section */
-        .account-section {
-            background: rgba(255, 255, 255, 0.95);
-            padding: 24px 28px;
-            border-radius: 16px;
-            margin-bottom: 24px;
-            box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
-            border: 1px solid rgba(0, 0, 0, 0.06);
+        /* Positions table with clickable rows */
+        .positions-table {
+            width: 100%;
+            background: white;
+            border-radius: 12px;
+            overflow: hidden;
         }
         
-        .account-header {
-            font-size: 18px;
-            font-weight: 700;
-            color: #1a1a2e;
-            margin-bottom: 16px;
+        .positions-table thead {
+            background: #f8f9fa;
+        }
+        
+        .positions-table th {
+            padding: 16px;
+            text-align: left;
+            font-weight: 600;
+            color: #666;
+        }
+        
+        .positions-table td {
+            padding: 16px;
+            border-top: 1px solid #e9ecef;
+        }
+        
+        .position-row {
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        
+        .position-row:hover {
+            background-color: #f8f9fa;
+        }
+        
+        .clickable-hint {
+            font-size: 12px;
+            color: #999;
+            margin-top: 8px;
+        }
+        
+        /* Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.7);
+            overflow-y: auto;
+        }
+        
+        .modal-content {
+            background-color: white;
+            margin: 40px auto;
+            padding: 0;
+            width: 90%;
+            max-width: 1200px;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        }
+        
+        .modal-header {
+            padding: 24px 32px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 16px 16px 0 0;
             display: flex;
             justify-content: space-between;
             align-items: center;
         }
         
-        .account-status {
-            font-size: 13px;
+        .modal-header h2 {
+            font-size: 24px;
             font-weight: 600;
-            color: #6b7280;
         }
         
-        .account-grid {
+        .close-modal {
+            color: white;
+            font-size: 32px;
+            font-weight: bold;
+            cursor: pointer;
+            border: none;
+            background: none;
+        }
+        
+        .close-modal:hover {
+            opacity: 0.8;
+        }
+        
+        .modal-body {
+            padding: 32px;
+        }
+        
+        /* Position details sections */
+        .details-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 20px;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 24px;
+            margin-bottom: 32px;
         }
         
-        .account-stat {
-            display: flex;
-            flex-direction: column;
+        .detail-card {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 12px;
+            border-left: 4px solid #667eea;
         }
         
-        .account-stat-label {
-            font-size: 12px;
-            text-transform: uppercase;
-            letter-spacing: 0.8px;
-            color: #6b7280;
+        .detail-card h3 {
+            font-size: 16px;
             font-weight: 600;
-            margin-bottom: 6px;
+            color: #666;
+            margin-bottom: 12px;
         }
         
-        .account-stat-value {
+        .detail-value {
             font-size: 24px;
             font-weight: 700;
             color: #1a1a2e;
         }
         
-        /* Banners */
-        .warning-banner {
-            background: rgba(255, 255, 255, 0.95);
-            padding: 20px 24px;
-            border-radius: 16px;
-            margin-bottom: 24px;
-            border-left: 4px solid #f59e0b;
-            box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
-        }
-        
-        .warning-banner strong {
-            color: #d97706;
-            font-weight: 600;
-        }
-        
-        .warning-banner p {
-            color: #4b5563;
-            line-height: 1.6;
+        .detail-subvalue {
+            font-size: 14px;
+            color: #999;
             margin-top: 4px;
         }
         
-        .info-banner {
-            background: rgba(255, 255, 255, 0.95);
-            padding: 20px 24px;
-            border-radius: 16px;
-            margin-bottom: 24px;
-            border-left: 4px solid #3b82f6;
-            box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
-        }
-        
-        .info-banner strong {
-            color: #1e40af;
-            font-weight: 600;
-        }
-        
-        .info-banner p {
-            color: #4b5563;
-            line-height: 1.6;
-            margin-top: 4px;
-        }
-        
-        /* Stats Grid */
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-            gap: 20px;
-            margin-bottom: 24px;
-        }
-        
-        .stat-card {
-            background: rgba(255, 255, 255, 0.95);
+        .chart-container {
+            background: white;
             padding: 24px;
-            border-radius: 16px;
-            box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
-            transition: transform 0.2s, box-shadow 0.2s;
-            border: 1px solid rgba(0, 0, 0, 0.06);
+            border-radius: 12px;
+            margin-bottom: 32px;
+            border: 1px solid #e9ecef;
         }
         
-        .stat-card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+        .chart-container h3 {
+            margin-bottom: 16px;
+            font-size: 18px;
+            font-weight: 600;
         }
         
-        .stat-label {
+        /* Scenarios section */
+        .scenarios-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 16px;
+            margin-bottom: 32px;
+        }
+        
+        .scenario-card {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 12px;
+            text-align: center;
+        }
+        
+        .scenario-card.best { border-top: 4px solid #10b981; }
+        .scenario-card.worst { border-top: 4px solid #ef4444; }
+        .scenario-card.day-end { border-top: 4px solid #3b82f6; }
+        
+        .scenario-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: #666;
+            margin-bottom: 8px;
+        }
+        
+        .scenario-price {
+            font-size: 28px;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+        
+        .scenario-pnl {
+            font-size: 16px;
+            font-weight: 600;
+        }
+        
+        /* Ratings table */
+        .ratings-table {
+            width: 100%;
+            margin-bottom: 32px;
+        }
+        
+        .ratings-table th {
+            padding: 12px;
+            background: #f8f9fa;
+            text-align: left;
+            font-weight: 600;
+            color: #666;
+        }
+        
+        .ratings-table td {
+            padding: 12px;
+            border-top: 1px solid #e9ecef;
+        }
+        
+        .rating-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
             font-size: 12px;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            color: #6b7280;
+            font-weight: 600;
+        }
+        
+        .rating-strong-bull { background: #10b981; color: white; }
+        .rating-bull { background: #34d399; color: white; }
+        .rating-soft-bull { background: #6ee7b7; color: #065f46; }
+        .rating-neutral { background: #9ca3af; color: white; }
+        .rating-soft-bear { background: #fca5a5; color: #991b1b; }
+        .rating-bear { background: #f87171; color: white; }
+        .rating-strong-bear { background: #ef4444; color: white; }
+        
+        /* Confidence meters */
+        .confidence-section {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 24px;
+            margin-bottom: 32px;
+        }
+        
+        .confidence-card {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 12px;
+        }
+        
+        .confidence-meter {
+            height: 20px;
+            background: #e9ecef;
+            border-radius: 10px;
+            overflow: hidden;
+            margin-top: 12px;
+        }
+        
+        .confidence-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            transition: width 0.3s;
+        }
+        
+        /* Day end options */
+        .options-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 16px;
+        }
+        
+        .option-card {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            border: 2px solid #e9ecef;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .option-card:hover {
+            border-color: #667eea;
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2);
+        }
+        
+        .option-title {
+            font-size: 16px;
             font-weight: 600;
             margin-bottom: 8px;
         }
         
-        .stat-value {
-            font-size: 32px;
-            font-weight: 700;
-            color: #1a1a2e;
+        .option-risk {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+        
+        .option-risk.low { background: #d1fae5; color: #065f46; }
+        .option-risk.medium { background: #fef3c7; color: #92400e; }
+        .option-risk.high { background: #fee2e2; color: #991b1b; }
+        
+        /* Entry logic section */
+        .entry-logic {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 32px;
+        }
+        
+        .entry-logic h3 {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 12px;
+        }
+        
+        .logic-item {
+            margin-bottom: 12px;
+            padding: 12px;
+            background: white;
+            border-radius: 8px;
+        }
+        
+        .logic-label {
+            font-size: 12px;
+            font-weight: 600;
+            color: #666;
+            text-transform: uppercase;
             margin-bottom: 4px;
         }
         
-        .stat-subvalue {
-            font-size: 13px;
-            color: #9ca3af;
-            font-weight: 500;
+        .logic-value {
+            font-size: 14px;
+            color: #1a1a2e;
         }
         
         .positive { color: #10b981; }
         .negative { color: #ef4444; }
-        
-        /* Positions Table */
-        .positions-section {
-            background: rgba(255, 255, 255, 0.95);
-            border-radius: 16px;
-            padding: 28px;
-            box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
-            border: 1px solid rgba(0, 0, 0, 0.06);
-        }
-        
-        .section-header {
-            font-size: 20px;
-            font-weight: 700;
-            color: #1a1a2e;
-            margin-bottom: 20px;
-            letter-spacing: -0.3px;
-        }
-        
-        table { 
-            width: 100%; 
-            border-collapse: separate;
-            border-spacing: 0;
-        }
-        
-        thead {
-            background: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%);
-        }
-        
-        th {
-            text-align: left;
-            padding: 16px;
-            color: #6b7280;
-            font-weight: 600;
-            font-size: 12px;
-            text-transform: uppercase;
-            letter-spacing: 0.8px;
-            border-bottom: 2px solid #e5e7eb;
-        }
-        
-        th:first-child { border-radius: 12px 0 0 0; }
-        th:last-child { border-radius: 0 12px 0 0; }
-        
-        td { 
-            padding: 18px 16px; 
-            border-bottom: 1px solid #f3f4f6;
-            font-size: 14px;
-            color: #374151;
-        }
-        
-        tbody tr {
-            transition: background 0.2s;
-        }
-        
-        tbody tr:hover {
-            background: #f9fafb;
-        }
-        
-        tbody tr:last-child td {
-            border-bottom: none;
-        }
-        
-        .symbol-cell {
-            font-weight: 700;
-            color: #1a1a2e;
-            font-size: 15px;
-        }
-        
-        .empty-state {
-            text-align: center;
-            padding: 60px 20px;
-            color: #9ca3af;
-        }
-        
-        .empty-state-icon {
-            font-size: 48px;
-            margin-bottom: 12px;
-            opacity: 0.3;
-        }
-        
-        /* Responsive */
-        @media (max-width: 768px) {
-            .header-content {
-                flex-direction: column;
-                align-items: flex-start;
-                gap: 16px;
-            }
-            
-            .header-actions {
-                flex-wrap: wrap;
-            }
-            
-            .stats-grid {
-                grid-template-columns: 1fr;
-            }
-            
-            .main-content {
-                padding: 20px;
-            }
-            
-            .positions-section {
-                overflow-x: auto;
-            }
-            
-            table {
-                min-width: 600px;
-            }
-        }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <div class="header-content">
-                <div class="logo-section">
-                    <h1>Trading Dashboard</h1>
-                    <div class="tagline">Algorithmic Trading System • Paper Account</div>
-                </div>
-                <div class="header-actions">
-                    <div class="toggle-container">
-                        <span class="toggle-label">Trading</span>
-                        <label class="toggle-switch">
-                            <input type="checkbox" id="tradingToggle">
-                            <span class="toggle-slider"></span>
-                        </label>
-                    </div>
-                    <span id="statusBadge" class="status-badge">Loading...</span>
-                    <span id="autoSelectBadge" class="status-badge status-auto" style="display:none;">Auto-Select</span>
-                    <a href="/backtest" class="settings-btn">📊 Backtest</a>
-                    <a href="/settings" class="settings-btn">⚙️ Settings</a>
-                </div>
+    <div class="header">
+        <div class="header-content">
+            <div class="logo-section">
+                <h1>Trading Dashboard</h1>
+            </div>
+            <div class="header-actions">
+                <a href="/backtest" class="settings-btn">📊 Backtest</a>
+                <a href="/settings" class="settings-btn">⚙️ Settings</a>
             </div>
         </div>
+    </div>
+    
+    <div class="main-content">
+        <h2 style="color: white; margin-bottom: 24px;">Open Positions</h2>
+        <p class="clickable-hint" style="color: rgba(255,255,255,0.8);">💡 Click on any position to see detailed analysis</p>
         
-        <div class="main-content">
-            <div id="warningBanner" class="warning-banner" style="display:none;">
-                <strong>⚠️ Trading Disabled</strong>
-                <p>The bot is monitoring only. Enable the toggle above to allow trade execution.</p>
+        <div style="background: white; border-radius: 12px; overflow: hidden; margin-top: 16px;">
+            <table class="positions-table" id="positionsTable">
+                <thead>
+                    <tr>
+                        <th>Symbol</th>
+                        <th>Shares</th>
+                        <th>Entry Price</th>
+                        <th>Current Price</th>
+                        <th>P&L</th>
+                        <th>P&L %</th>
+                    </tr>
+                </thead>
+                <tbody id="positionsBody">
+                    <tr>
+                        <td colspan="6" style="text-align: center; padding: 40px; color: #999;">
+                            Loading positions...
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+    
+    <!-- Position Details Modal -->
+    <div id="positionModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="modalSymbol">AAPL - Position Details</h2>
+                <button class="close-modal" onclick="closeModal()">&times;</button>
             </div>
-            
-            <div id="infoBanner" class="info-banner">
-                <strong>Intelligent Stock Selection Active</strong>
-                <p>System automatically analyzes and selects optimal trading opportunities daily based on multi-factor technical analysis.</p>
-            </div>
-            
-            <!-- Account Section -->
-            <div class="account-section">
-                <div class="account-header">
-                    Alpaca Account
-                    <span class="account-status" id="accountStatus">Loading...</span>
-                </div>
-                <div class="account-grid">
-                    <div class="account-stat">
-                        <div class="account-stat-label">Portfolio Value</div>
-                        <div class="account-stat-value" id="portfolioValue">$0.00</div>
-                    </div>
-                    <div class="account-stat">
-                        <div class="account-stat-label">Buying Power</div>
-                        <div class="account-stat-value" id="buyingPower">$0.00</div>
-                    </div>
-                    <div class="account-stat">
-                        <div class="account-stat-label">Cash</div>
-                        <div class="account-stat-value" id="cash">$0.00</div>
-                    </div>
-                    <div class="account-stat">
-                        <div class="account-stat-label">Today's P&L</div>
-                        <div class="account-stat-value" id="todayPnl">$0.00</div>
-                    </div>
-                </div>
-            </div>
-            
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <div class="stat-label">Active Symbols</div>
-                    <div class="stat-value" id="symbols" style="font-size: 20px; line-height: 1.3;">--</div>
-                    <div class="stat-subvalue" id="symbolsSource">Loading...</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-label">Bot Daily P&L</div>
-                    <div class="stat-value" id="dailyPnl">$0.00</div>
-                    <div class="stat-subvalue">Today's Performance</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-label">Total Trades</div>
-                    <div class="stat-value" id="totalTrades">0</div>
-                    <div class="stat-subvalue"><span id="winRate">0%</span> Win Rate</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-label">Open Positions</div>
-                    <div class="stat-value" id="positionCount">0</div>
-                    <div class="stat-subvalue">Active Trades</div>
-                </div>
-            </div>
-            
-            <div class="positions-section">
-                <h2 class="section-header">Current Positions</h2>
-                <div id="positionsContent">
-                    <div class="empty-state">
-                        <div class="empty-state-icon">📊</div>
-                        <div>No open positions</div>
-                    </div>
-                </div>
+            <div class="modal-body" id="modalBody">
+                <p style="text-align: center; color: #999;">Loading...</p>
             </div>
         </div>
     </div>
     
     <script>
-        let isUpdatingToggle = false;
+        let currentPositions = [];
         
-        async function fetchData() {
+        // Fetch positions
+        async function fetchPositions() {
             try {
-                const [health, stats, positions, settings, account] = await Promise.all([
-                    fetch('/health').then(r => r.json()),
-                    fetch('/stats').then(r => r.json()),
-                    fetch('/positions').then(r => r.json()),
-                    fetch('/api/settings').then(r => r.json()),
-                    fetch('/account').then(r => r.json())
-                ]);
-                updateDashboard(health, stats, positions, settings, account);
+                const response = await fetch('/positions');
+                const data = await response.json();
+                currentPositions = data.positions || [];
+                renderPositions();
             } catch (error) {
-                console.error('Error:', error);
+                console.error('Error fetching positions:', error);
             }
         }
         
-        function updateDashboard(health, stats, positions, settings, account) {
-            // Update toggle
-            const toggle = document.getElementById('tradingToggle');
-            const shouldBeChecked = health.trading_enabled;
+        // Render positions table
+        function renderPositions() {
+            const tbody = document.getElementById('positionsBody');
             
-            if (toggle.checked !== shouldBeChecked && !isUpdatingToggle) {
-                toggle.checked = shouldBeChecked;
+            if (currentPositions.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 40px; color: #999;">No open positions</td></tr>';
+                return;
             }
             
-            // Status badge
-            const statusBadge = document.getElementById('statusBadge');
-            if (health.trading_enabled) {
-                statusBadge.textContent = 'Trading Active';
-                statusBadge.className = 'status-badge status-running';
-                document.getElementById('warningBanner').style.display = 'none';
-            } else {
-                statusBadge.textContent = 'Monitoring Only';
-                statusBadge.className = 'status-badge status-disabled';
-                document.getElementById('warningBanner').style.display = 'block';
-            }
+            tbody.innerHTML = currentPositions.map(pos => `
+                <tr class="position-row" onclick="showPositionDetails('${pos.symbol}')">
+                    <td style="font-weight: 600;">${pos.symbol}</td>
+                    <td>${pos.shares.toFixed(2)}</td>
+                    <td>$${pos.entry_price.toFixed(2)}</td>
+                    <td>$${pos.current_price.toFixed(2)}</td>
+                    <td class="${pos.pnl >= 0 ? 'positive' : 'negative'}">$${pos.pnl.toFixed(2)}</td>
+                    <td class="${pos.pnl_pct >= 0 ? 'positive' : 'negative'}">${pos.pnl_pct.toFixed(2)}%</td>
+                </tr>
+            `).join('');
+        }
+        
+        // Show position details
+        async function showPositionDetails(symbol) {
+            const modal = document.getElementById('positionModal');
+            const modalBody = document.getElementById('modalBody');
+            const modalSymbol = document.getElementById('modalSymbol');
             
-            // Auto-select badge
-            if (settings.auto_select_stocks) {
-                document.getElementById('autoSelectBadge').style.display = 'inline-flex';
-                document.getElementById('infoBanner').style.display = 'block';
-            }
+            modalSymbol.textContent = `${symbol} - Position Details`;
+            modalBody.innerHTML = '<p style="text-align: center; color: #999; padding: 40px;">Loading detailed analysis...</p>';
+            modal.style.display = 'block';
             
-            // Account data
-            if (account && account.equity) {
-                document.getElementById('portfolioValue').textContent = `$${parseFloat(account.equity).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
-                document.getElementById('buyingPower').textContent = `$${parseFloat(account.buying_power).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
-                document.getElementById('cash').textContent = `$${parseFloat(account.cash).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+            try {
+                const response = await fetch(`/api/position-details/${symbol}`);
+                const data = await response.json();
                 
-                const todayPnl = parseFloat(account.today_pnl || 0);
-                const todayPnlEl = document.getElementById('todayPnl');
-                todayPnlEl.textContent = `$${todayPnl.toFixed(2)}`;
-                todayPnlEl.className = 'account-stat-value ' + (todayPnl >= 0 ? 'positive' : 'negative');
-                
-                document.getElementById('accountStatus').textContent = account.status || 'Active';
+                renderPositionDetails(data);
+            } catch (error) {
+                console.error('Error fetching position details:', error);
+                modalBody.innerHTML = '<p style="text-align: center; color: #ef4444; padding: 40px;">Error loading details</p>';
             }
+        }
+        
+        // Render full position details
+        function renderPositionDetails(data) {
+            const modalBody = document.getElementById('modalBody');
+            const state = data.current_state;
+            const scenarios = data.scenarios;
+            const ratings = data.historical_ratings;
+            const confidences = data.confidences;
+            const options = data.day_end_options;
+            const entry = data.entry_logic;
             
-            // Symbols
-            const symbolsEl = document.getElementById('symbols');
-            const symbolsSourceEl = document.getElementById('symbolsSource');
-            if (settings.symbols) {
-                symbolsEl.textContent = settings.symbols.replace(/,/g, ', ');
-                if (settings.auto_select_stocks) {
-                    symbolsSourceEl.textContent = 'Auto-selected (Min Score: ' + settings.min_stock_score + ')';
-                } else {
-                    symbolsSourceEl.textContent = 'Manually configured';
+            modalBody.innerHTML = `
+                <!-- Current State -->
+                <div class="details-grid">
+                    <div class="detail-card">
+                        <h3>Position Value</h3>
+                        <div class="detail-value">$${state.position_value.toFixed(2)}</div>
+                        <div class="detail-subvalue">${state.shares.toFixed(2)} shares</div>
+                    </div>
+                    <div class="detail-card">
+                        <h3>Current P&L</h3>
+                        <div class="detail-value ${state.current_pnl >= 0 ? 'positive' : 'negative'}">
+                            $${state.current_pnl.toFixed(2)}
+                        </div>
+                        <div class="detail-subvalue">${state.current_pnl_pct.toFixed(2)}%</div>
+                    </div>
+                    <div class="detail-card">
+                        <h3>Entry Price</h3>
+                        <div class="detail-value">$${state.entry_price.toFixed(2)}</div>
+                        <div class="detail-subvalue">Current: $${state.current_price.toFixed(2)}</div>
+                    </div>
+                </div>
+                
+                <!-- Live Chart -->
+                <div class="chart-container">
+                    <h3>📈 Live Price Chart (Today)</h3>
+                    <canvas id="priceChart" height="80"></canvas>
+                </div>
+                
+                <!-- Entry Logic -->
+                <div class="entry-logic">
+                    <h3>🎯 Entry Logic & Reasoning</h3>
+                    <div class="logic-item">
+                        <div class="logic-label">Screening Model</div>
+                        <div class="logic-value">${data.models_used.screening}</div>
+                    </div>
+                    <div class="logic-item">
+                        <div class="logic-label">Screening Logic</div>
+                        <div class="logic-value">${entry.screening_logic}</div>
+                    </div>
+                    <div class="logic-item">
+                        <div class="logic-label">Day Trading Model</div>
+                        <div class="logic-value">${data.models_used.daytrade}</div>
+                    </div>
+                    <div class="logic-item">
+                        <div class="logic-label">Entry Signal</div>
+                        <div class="logic-value">${entry.entry_signal}</div>
+                    </div>
+                    <div class="logic-item">
+                        <div class="logic-label">Entry Time</div>
+                        <div class="logic-value">${new Date(state.entry_time).toLocaleString()}</div>
+                    </div>
+                </div>
+                
+                <!-- Scenarios -->
+                <h3 style="margin-bottom: 16px;">📊 Price Scenarios</h3>
+                <div class="scenarios-grid">
+                    <div class="scenario-card best">
+                        <div class="scenario-title">Best Case</div>
+                        <div class="scenario-price positive">$${scenarios.best_case.target_price.toFixed(2)}</div>
+                        <div class="scenario-pnl positive">+$${scenarios.best_case.potential_pnl.toFixed(2)}</div>
+                        <div class="detail-subvalue">${scenarios.best_case.description}</div>
+                    </div>
+                    <div class="scenario-card day-end">
+                        <div class="scenario-title">Day End Target</div>
+                        <div class="scenario-price">$${scenarios.day_end.target_price.toFixed(2)}</div>
+                        <div class="scenario-pnl">+$${scenarios.day_end.potential_pnl.toFixed(2)}</div>
+                        <div class="detail-subvalue">${scenarios.day_end.description}</div>
+                    </div>
+                    <div class="scenario-card worst">
+                        <div class="scenario-title">Worst Case</div>
+                        <div class="scenario-price negative">$${scenarios.worst_case.target_price.toFixed(2)}</div>
+                        <div class="scenario-pnl negative">$${scenarios.worst_case.potential_pnl.toFixed(2)}</div>
+                        <div class="detail-subvalue">${scenarios.worst_case.description}</div>
+                    </div>
+                </div>
+                
+                <!-- Confidence Scores -->
+                <h3 style="margin-bottom: 16px;">🎯 Trading Confidence</h3>
+                <div class="confidence-section">
+                    <div class="confidence-card">
+                        <h4>Day Trade Confidence</h4>
+                        <div style="font-size: 24px; font-weight: 700; margin: 8px 0;">${confidences.day_trade.score}/100</div>
+                        <div style="font-size: 14px; color: #666; margin-bottom: 8px;">${confidences.day_trade.level}</div>
+                        <div class="confidence-meter">
+                            <div class="confidence-fill" style="width: ${confidences.day_trade.score}%"></div>
+                        </div>
+                        <div style="font-size: 12px; color: #999; margin-top: 8px;">${confidences.day_trade.factors || ''}</div>
+                    </div>
+                    <div class="confidence-card">
+                        <h4>Long Term Confidence</h4>
+                        <div style="font-size: 24px; font-weight: 700; margin: 8px 0;">${confidences.long_term.score}/100</div>
+                        <div style="font-size: 14px; color: #666; margin-bottom: 8px;">${confidences.long_term.level}</div>
+                        <div class="confidence-meter">
+                            <div class="confidence-fill" style="width: ${confidences.long_term.score}%"></div>
+                        </div>
+                        <div style="font-size: 12px; color: #999; margin-top: 8px;">${confidences.long_term.factors || ''}</div>
+                    </div>
+                </div>
+                
+                <!-- Historical Ratings -->
+                <h3 style="margin-bottom: 16px;">📅 Historical Performance Ratings</h3>
+                <table class="ratings-table">
+                    <thead>
+                        <tr>
+                            <th>Time Period</th>
+                            <th>Rating</th>
+                            <th>Change</th>
+                            <th>Trend Strength</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${Object.entries(ratings).map(([period, rating]) => `
+                            <tr>
+                                <td>${period.replace('_', ' ').toUpperCase()}</td>
+                                <td><span class="rating-badge rating-${rating.rating.toLowerCase().replace(' ', '-')}">${rating.rating}</span></td>
+                                <td class="${rating.change_pct >= 0 ? 'positive' : 'negative'}">${rating.change_pct >= 0 ? '+' : ''}${rating.change_pct.toFixed(2)}%</td>
+                                <td>${rating.trend_strength ? rating.trend_strength.toFixed(1) + '%' : 'N/A'}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+                
+                <!-- Day End Options -->
+                <h3 style="margin-bottom: 16px;">⏰ Day End Closeout Options</h3>
+                <div class="options-grid">
+                    ${options.map(option => `
+                        <div class="option-card">
+                            <div class="option-title">${option.action}</div>
+                            <span class="option-risk ${option.risk.toLowerCase()}">${option.risk} Risk</span>
+                            <p style="font-size: 14px; color: #666; margin: 12px 0;">${option.description}</p>
+                            <p style="font-size: 12px; color: #999;">${option.risk_description}</p>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+            
+            // Load chart data and render
+            loadPriceChart(data.symbol);
+        }
+        
+        // Load and render price chart
+        async function loadPriceChart(symbol) {
+            try {
+                const response = await fetch(`/api/live-chart/${symbol}`);
+                const chartData = await response.json();
+                
+                if (chartData.error) {
+                    console.error('Chart error:', chartData.error);
+                    return;
                 }
-            }
-            
-            // Bot P&L
-            const pnl = stats.daily_pnl || 0;
-            const pnlEl = document.getElementById('dailyPnl');
-            pnlEl.textContent = `$${pnl.toFixed(2)}`;
-            pnlEl.className = 'stat-value ' + (pnl >= 0 ? 'positive' : 'negative');
-            
-            // Stats
-            document.getElementById('totalTrades').textContent = stats.total_trades || 0;
-            document.getElementById('winRate').textContent = (stats.win_rate || 0) + '%';
-            document.getElementById('positionCount').textContent = health.positions || 0;
-            
-            // Positions
-            const positionsContent = document.getElementById('positionsContent');
-            if (positions.positions && positions.positions.length > 0) {
-                let tableHTML = '<table><thead><tr><th>Symbol</th><th>Shares</th><th>Entry Price</th><th>Current Price</th><th>P&L</th><th>P&L %</th></tr></thead><tbody>';
-                positions.positions.forEach(pos => {
-                    const pnlClass = pos.pnl >= 0 ? 'positive' : 'negative';
-                    tableHTML += `<tr>
-                        <td class="symbol-cell">${pos.symbol}</td>
-                        <td>${pos.shares.toFixed(2)}</td>
-                        <td>$${pos.entry_price.toFixed(2)}</td>
-                        <td>$${pos.current_price.toFixed(2)}</td>
-                        <td class="${pnlClass}">$${pos.pnl.toFixed(2)}</td>
-                        <td class="${pnlClass}">${pos.pnl_pct.toFixed(2)}%</td>
-                    </tr>`;
+                
+                const ctx = document.getElementById('priceChart');
+                if (!ctx) return;
+                
+                new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: chartData.data.map(d => new Date(d.time).toLocaleTimeString()),
+                        datasets: [{
+                            label: 'Price',
+                            data: chartData.data.map(d => d.close),
+                            borderColor: '#667eea',
+                            backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                            borderWidth: 2,
+                            fill: true,
+                            tension: 0.4
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: true,
+                        plugins: {
+                            legend: { display: false }
+                        },
+                        scales: {
+                            y: {
+                                ticks: {
+                                    callback: (value) => '$' + value.toFixed(2)
+                                }
+                            }
+                        }
+                    }
                 });
-                tableHTML += '</tbody></table>';
-                positionsContent.innerHTML = tableHTML;
-            } else {
-                positionsContent.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📊</div><div>No open positions</div></div>';
+            } catch (error) {
+                console.error('Error loading chart:', error);
             }
         }
         
-        // Toggle handler
-        document.getElementById('tradingToggle').addEventListener('change', async function(e) {
-            if (isUpdatingToggle) return;
-            
-            isUpdatingToggle = true;
-            const enabled = e.target.checked;
-            
-            try {
-                const response = await fetch('/toggle-trading', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ enabled: enabled })
-                });
-                
-                if (!response.ok) throw new Error('Failed to toggle trading');
-                
-                await fetchData();
-            } catch (error) {
-                console.error('Error toggling trading:', error);
-                e.target.checked = !enabled;
-                alert('Failed to toggle trading. Please try again.');
-            } finally {
-                isUpdatingToggle = false;
-            }
-        });
+        // Close modal
+        function closeModal() {
+            document.getElementById('positionModal').style.display = 'none';
+        }
         
-        fetchData();
-        setInterval(fetchData, 10000);
+        // Close modal on outside click
+        window.onclick = function(event) {
+            const modal = document.getElementById('positionModal');
+            if (event.target === modal) {
+                closeModal();
+            }
+        }
+        
+        // Initial load
+        fetchPositions();
+        
+        // Refresh every 10 seconds
+        setInterval(fetchPositions, 10000);
     </script>
 </body>
 </html>
 """
-
-# Settings page HTML (unchanged)
-SETTINGS_PAGE_HTML = """
-[... keeping original settings page HTML from document ...]
-"""
-
-# COMPREHENSIVE BACKTEST PAGE - Load from external file
-# This is too large to inline, so we'll load it dynamically
-try:
-    from enhanced_backtest_page import ENHANCED_BACKTEST_HTML as BACKTEST_PAGE_HTML
-except ImportError:
-    # Fallback to original if enhanced version not available
-    BACKTEST_PAGE_HTML = """
-    [... original backtest page ...]
-    """
