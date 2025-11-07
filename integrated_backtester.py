@@ -2,6 +2,8 @@
 Integrated Backtester
 Combines daily screening with intraday trading models
 Each day: Screen → Select top N → Trade → Close by 3:40 PM
+
+FIXED VERSION: Properly passes API credentials from Render environment
 """
 
 import pandas as pd
@@ -20,6 +22,19 @@ class IntegratedBacktester:
     """Backtest with daily screening + intraday trading"""
     
     def __init__(self, api_key: str, api_secret: str, initial_capital: float = 10000):
+        """
+        Initialize backtester with API credentials
+        
+        Args:
+            api_key: Alpaca API key (from Render environment via config.py)
+            api_secret: Alpaca API secret (from Render environment via config.py)
+            initial_capital: Starting capital for backtest
+        """
+        # FIXED: Store credentials so we can pass them to screeners
+        self.api_key = api_key
+        self.api_secret = api_secret
+        
+        # Initialize client
         self.client = StockHistoricalDataClient(api_key, api_secret)
         self.initial_capital = initial_capital
         self.feed = DataFeed.IEX
@@ -169,7 +184,7 @@ class IntegratedBacktester:
                     position_size = account_value * 0.02
                     
                     # Limit position size
-                    position_size = min(position_size, cash * 0.3)  # Max 30% of cash
+                    position_size = min(position_size, cash * 0.30)  # Max 30% of cash
                     
                     if position_size < 100:  # Min $100 position
                         continue
@@ -253,8 +268,8 @@ class IntegratedBacktester:
         all_trades = []
         daily_results = []
         
-        # Create models
-        screener = get_screener(screener_model, '', '', **screener_params)
+        # Create models - FIXED: Pass actual API credentials instead of empty strings
+        screener = get_screener(screener_model, self.api_key, self.api_secret, **screener_params)
         day_trader = get_day_trade_model(day_model, **day_model_params)
         
         # Iterate through trading days
@@ -288,47 +303,41 @@ class IntegratedBacktester:
             
             print(f"\n✅ {len(screened)} stocks qualified, selected top {top_n}:")
             for i, stock in enumerate(selected, 1):
-                print(f"  {i}. {stock.symbol}: {stock.score:.1f}/100 - {stock.reason}")
+                print(f"  {i}. {stock.symbol}: {stock.score:.1f} - {stock.reason}")
             
-            # Step 2: Trade selected stocks
-            print(f"\n📈 Trading {len(selected)} stocks...")
+            # Step 2: Simulate trading day
+            print(f"\n💹 Simulating trading day...")
+            day_start_cash = cash
+            day_start_positions = len(positions)
             
-            selected_dicts = [
-                {
-                    'symbol': s.symbol,
-                    'score': s.score,
-                    'price': s.price,
-                    'metadata': s.metadata
-                }
-                for s in selected
-            ]
-            
-            ending_cash, ending_positions, day_trades = self.simulate_trading_day(
-                selected_dicts, current_date, day_trader,
-                cash, positions, force_execution
+            cash, positions, day_trades = self.simulate_trading_day(
+                selected,
+                current_date,
+                day_trader,
+                cash,
+                positions,
+                force_execution
             )
             
-            # Step 3: Update state
-            cash = ending_cash
-            positions = ending_positions
+            # Track results
             all_trades.extend(day_trades)
             
-            # Calculate day results
+            # Calculate day P&L
             buy_trades = [t for t in day_trades if t['action'] == 'buy']
             sell_trades = [t for t in day_trades if t['action'] == 'sell']
             day_pnl = sum(t['pnl'] for t in sell_trades)
             
-            print(f"\n📊 Day Results:")
-            print(f"  Entries: {len(buy_trades)}")
-            print(f"  Exits: {len(sell_trades)}")
-            print(f"  Day P&L: ${day_pnl:.2f}")
-            print(f"  Ending Cash: ${cash:,.2f}")
-            print(f"  Open Positions: {len(positions)}")
+            print(f"\n📊 Day Summary:")
+            print(f"   Entries: {len(buy_trades)}")
+            print(f"   Exits: {len(sell_trades)}")
+            print(f"   Day P&L: ${day_pnl:,.2f}")
+            print(f"   Ending cash: ${cash:,.2f}")
+            print(f"   Open positions: {len(positions)}")
             
             daily_results.append({
                 'date': current_date.date(),
-                'screened_count': len(screened),
-                'selected_symbols': [s.symbol for s in selected],
+                'screened': len(screened),
+                'selected': [s.symbol for s in selected],
                 'entries': len(buy_trades),
                 'exits': len(sell_trades),
                 'day_pnl': day_pnl,

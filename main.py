@@ -48,9 +48,9 @@ app = FastAPI(title="Enhanced Trading Bot API")
 trader: Optional[object] = None
 position_analyzer: Optional[PositionAnalyzer] = None
 
-# Initialize position analyzer
+# Initialize position analyzer with IEX feed (free tier)
 try:
-    position_analyzer = PositionAnalyzer(settings.alpaca_key, settings.alpaca_secret)
+    position_analyzer = PositionAnalyzer(settings.alpaca_key, settings.alpaca_secret, feed="iex")
 except Exception as e:
     logger.error(f"Failed to initialize position analyzer: {e}")
 
