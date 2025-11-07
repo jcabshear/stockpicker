@@ -109,12 +109,12 @@ async def comprehensive_backtest_stream(
             # Create a queue for progress updates
             progress_queue = asyncio.Queue()
             
-            def sync_progress_callback(message: str, progress_pct: int):
-                """Sync callback that puts updates in async queue"""
+            def sync_progress_callback(message: str, progress_pct: int, detail: str = ""):
+                """Sync callback that puts updates in async queue - accepts 3 parameters"""
                 try:
                     loop.call_soon_threadsafe(
                         progress_queue.put_nowait,
-                        {'message': message, 'percent': progress_pct}
+                        {'message': message, 'percent': progress_pct, 'detail': detail}
                     )
                 except Exception as e:
                     logger.error(f"Error in progress callback: {e}")
@@ -141,7 +141,7 @@ async def comprehensive_backtest_stream(
                 while not backtest_future.done():
                     try:
                         update = await asyncio.wait_for(progress_queue.get(), timeout=1.0)
-                        yield f"data: {json.dumps({'type': 'progress', 'percent': update['percent'], 'message': update['message'], 'detail': ''})}\n\n"
+                        yield f"data: {json.dumps({'type': 'progress', 'percent': update['percent'], 'message': update['message'], 'detail': update.get('detail', '')})}\n\n"
                     except asyncio.TimeoutError:
                         # No update in last second, continue waiting
                         continue
@@ -152,7 +152,7 @@ async def comprehensive_backtest_stream(
             # Drain remaining progress updates
             while not progress_queue.empty():
                 update = await progress_queue.get()
-                yield f"data: {json.dumps({'type': 'progress', 'percent': update['percent'], 'message': update['message'], 'detail': ''})}\n\n"
+                yield f"data: {json.dumps({'type': 'progress', 'percent': update['percent'], 'message': update['message'], 'detail': update.get('detail', '')})}\n\n"
             
             # Format trades for JSON
             trades_list = []
@@ -247,9 +247,12 @@ async def run_comprehensive_backtest(params: ComprehensiveBacktestParams):
         logger.info(f"📊 Backtest params: {params.days} days, {len(universe)} stocks, top {params.top_n_stocks}")
         
         # Progress callback that logs to console
-        def log_progress(message: str, progress_pct: int):
-            """Log progress updates"""
-            logger.info(f"[{progress_pct}%] {message}")
+        def log_progress(message: str, progress_pct: int, detail: str = ""):
+            """Log progress updates - accepts 3 parameters"""
+            if detail:
+                logger.info(f"[{progress_pct}%] {message} - {detail}")
+            else:
+                logger.info(f"[{progress_pct}%] {message}")
         
         # Run backtest with progress logging
         results = backtester.run(
