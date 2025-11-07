@@ -1,14 +1,14 @@
 """
-Integrated Backtester
+Integrated Backtester with Progress Tracking
 Combines daily screening with intraday trading models
 Each day: Screen → Select top N → Trade → Close by 3:40 PM
 
-FIXED VERSION: Properly passes API credentials from Render environment
+FIXED VERSION with progress callbacks
 """
 
 import pandas as pd
 from datetime import datetime, timedelta, time as dt_time
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Callable, Optional
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
@@ -26,22 +26,18 @@ class IntegratedBacktester:
         Initialize backtester with API credentials
         
         Args:
-            api_key: Alpaca API key (from Render environment via config.py)
-            api_secret: Alpaca API secret (from Render environment via config.py)
+            api_key: Alpaca API key
+            api_secret: Alpaca API secret
             initial_capital: Starting capital for backtest
         """
-        # FIXED: Store credentials so we can pass them to screeners
         self.api_key = api_key
         self.api_secret = api_secret
-        
-        # Initialize client
         self.client = StockHistoricalDataClient(api_key, api_secret)
         self.initial_capital = initial_capital
         self.feed = DataFeed.IEX
     
     def fetch_minute_data(self, symbols: List[str], date: datetime) -> Dict[str, pd.DataFrame]:
         """Fetch minute-level data for trading day"""
-        # Market hours: 9:30 AM - 4:00 PM ET
         start = datetime.combine(date.date(), dt_time(9, 30))
         end = datetime.combine(date.date(), dt_time(16, 0))
         
@@ -71,7 +67,7 @@ class IntegratedBacktester:
             print(f"Error fetching minute data for {date.date()}: {e}")
             return {}
     
-    def simulate_trading_day(self, selected_stocks: List, date: datetime,
+    def simulate_trading_day(self, selected_stocks: List, date: datetime,  # 🔧 FIX: Changed List[dict] to List
                             day_model, cash: float, positions: dict, 
                             force_execution: bool) -> Tuple[float, dict, List[dict]]:
         """
@@ -82,17 +78,14 @@ class IntegratedBacktester:
         """
         trades = []
         
-        # Fetch minute data for selected stocks
+        # 🔧 FIX: Use attribute access instead of dictionary access
         symbols = [s.symbol for s in selected_stocks]
         minute_data = self.fetch_minute_data(symbols, date)
         
         if not minute_data:
             return cash, positions, trades
         
-        # Process each minute of trading day
-        trading_minutes = []
-        
-        # Get all unique timestamps across all symbols
+        # Get all unique timestamps
         all_timestamps = set()
         for symbol_df in minute_data.values():
             all_timestamps.update(symbol_df.index.tolist())
@@ -127,7 +120,7 @@ class IntegratedBacktester:
                         
                         del positions[symbol]
                 
-                break  # End trading for the day
+                break  # End trading
             
             # Check exits for existing positions
             for symbol in list(positions.keys()):
@@ -157,36 +150,28 @@ class IntegratedBacktester:
                         
                         del positions[symbol]
             
-            # Look for new entries (only if not already in position)
+            # Look for new entries
             for stock in selected_stocks:
-                symbol = stock.symbol  # Use attribute access
+                symbol = stock.symbol  # 🔧 FIX: Use attribute access
                 
-                if symbol in positions:  # Already in position
+                if symbol in positions:
                     continue
                 
                 symbol_df = minute_data.get(symbol)
                 if symbol_df is None or minute_ts not in symbol_df.index:
                     continue
                 
-                # Get bars up to this minute
                 minute_bars = symbol_df.loc[:minute_ts]
-                
-                # Generate signal
                 signal = day_model.generate_signal(symbol, minute_bars, stock)
                 
                 if signal and signal.action == 'buy':
-                    # Check confidence threshold if not forcing execution
                     if not force_execution and signal.confidence < 0.7:
                         continue
                     
-                    # Calculate position size (risk 2% per trade)
                     account_value = cash + sum(p['shares'] * p['current_price'] for p in positions.values())
-                    position_size = account_value * 0.02
+                    position_size = min(account_value * 0.02, cash * 0.30)
                     
-                    # Limit position size
-                    position_size = min(position_size, cash * 0.30)  # Max 30% of cash
-                    
-                    if position_size < 100:  # Min $100 position
+                    if position_size < 100:
                         continue
                     
                     shares = position_size / signal.price
@@ -216,7 +201,7 @@ class IntegratedBacktester:
                             'pnl_pct': 0
                         })
             
-            # Update current prices for positions
+            # Update current prices
             for symbol, pos in positions.items():
                 symbol_df = minute_data.get(symbol)
                 if symbol_df is not None and minute_ts in symbol_df.index:
@@ -230,24 +215,27 @@ class IntegratedBacktester:
             start_date: datetime, end_date: datetime,
             stock_universe: List[str] = None,
             top_n: int = 3, min_score: float = 60,
-            force_execution: bool = False) -> dict:
+            force_execution: bool = False,
+            progress_callback: Optional[Callable] = None) -> dict:
         """
-        Run integrated backtest
+        Run integrated backtest with progress tracking
         
         Args:
-            screener_model: Name of screening model
-            screener_params: Parameters for screener
-            day_model: Name of day trading model
-            day_model_params: Parameters for day model
-            start_date: Backtest start
-            end_date: Backtest end
-            stock_universe: Stocks to screen from
-            top_n: Number of stocks to select daily
-            min_score: Minimum score threshold
-            force_execution: If False, skip trades below confidence threshold
+            progress_callback: Optional function(message, progress_pct) for progress updates
         """
         if stock_universe is None:
             stock_universe = get_full_universe()
+        
+        # Count total trading days for progress
+        total_days = 0
+        temp_date = start_date
+        while temp_date <= end_date:
+            if temp_date.weekday() < 5:  # Weekday
+                total_days += 1
+            temp_date += timedelta(days=1)
+        
+        if progress_callback:
+            progress_callback("Initializing backtest...", 0)
         
         print(f"\n{'='*80}")
         print("INTEGRATED BACKTEST")
@@ -268,13 +256,14 @@ class IntegratedBacktester:
         all_trades = []
         daily_results = []
         
-        # Create models - FIXED: Pass actual API credentials instead of empty strings
+        # Create models
         screener = get_screener(screener_model, self.api_key, self.api_secret, **screener_params)
         day_trader = get_day_trade_model(day_model, **day_model_params)
         
         # Iterate through trading days
         current_date = start_date
         day_count = 0
+        completed_days = 0
         
         while current_date <= end_date:
             # Skip weekends
@@ -283,14 +272,22 @@ class IntegratedBacktester:
                 continue
             
             day_count += 1
+            completed_days += 1
+            progress_pct = int((completed_days / total_days) * 100)
+            
+            day_str = current_date.strftime("%Y-%m-%d")
+            
+            if progress_callback:
+                progress_callback(f"Day {day_count}: Screening {len(stock_universe)} stocks...", progress_pct)
+            
             print(f"\n{'='*80}")
-            print(f"DAY {day_count}: {current_date.date()}")
+            print(f"DAY {day_count}: {day_str}")
             print(f"{'='*80}")
             print(f"Starting cash: ${cash:,.2f}")
             
             # Step 1: Screen stocks
             print(f"\n🔍 Screening {len(stock_universe)} stocks...")
-            screener.client = self.client  # Use our client
+            screener.client = self.client
             screened = screener.screen(stock_universe, min_score=min_score)
             
             if not screened:
@@ -306,9 +303,11 @@ class IntegratedBacktester:
                 print(f"  {i}. {stock.symbol}: {stock.score:.1f} - {stock.reason}")
             
             # Step 2: Simulate trading day
+            if progress_callback:
+                symbols_str = ", ".join([s.symbol for s in selected])
+                progress_callback(f"Day {day_count}: Trading {symbols_str}...", progress_pct)
+            
             print(f"\n💹 Simulating trading day...")
-            day_start_cash = cash
-            day_start_positions = len(positions)
             
             cash, positions, day_trades = self.simulate_trading_day(
                 selected,
@@ -348,14 +347,16 @@ class IntegratedBacktester:
             current_date += timedelta(days=1)
         
         # Final calculations
+        if progress_callback:
+            progress_callback("Calculating final results...", 95)
+        
         print(f"\n{'='*80}")
         print("FINAL RESULTS")
         print(f"{'='*80}")
         
-        # Close any remaining positions at final market price
+        # Close remaining positions
         if positions:
             print(f"\nClosing {len(positions)} remaining positions...")
-            # Use last known prices
             for symbol, pos in positions.items():
                 cash += pos['shares'] * pos['current_price']
         
@@ -370,7 +371,7 @@ class IntegratedBacktester:
             winning_trades = close_trades[close_trades['pnl'] > 0]
             losing_trades = close_trades[close_trades['pnl'] < 0]
             
-            win_rate = len(winning_trades) / len(close_trades) if len(close_trades) > 0 else 0
+            win_rate = len(winning_trades) / len(close_trades)
             avg_win = winning_trades['pnl'].mean() if len(winning_trades) > 0 else 0
             avg_loss = losing_trades['pnl'].mean() if len(losing_trades) > 0 else 0
             profit_factor = abs(avg_win / avg_loss) if avg_loss != 0 else 0
@@ -399,14 +400,17 @@ class IntegratedBacktester:
             'avg_win': avg_win,
             'avg_loss': avg_loss,
             'profit_factor': profit_factor,
-            'sharpe_ratio': 0,  # Simplified for now
-            'max_drawdown': 0,  # Simplified for now
+            'sharpe_ratio': 0,
+            'max_drawdown': 0,
             'max_drawdown_pct': 0,
             'trades': all_trades,
             'daily_results': daily_results,
             'unique_stocks_traded': len(unique_stocks),
             'screening_sessions': len(daily_results)
         }
+        
+        if progress_callback:
+            progress_callback("Backtest complete!", 100)
         
         print(f"\nInitial Capital: ${self.initial_capital:,.2f}")
         print(f"Final Value: ${final_value:,.2f}")

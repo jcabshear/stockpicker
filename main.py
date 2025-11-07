@@ -1,23 +1,24 @@
 """
 Enhanced Trading Bot Main Application
-Includes:
+Complete version with all endpoints and modular structure
+
+Features:
 - Fixed authentication for backtesting
 - Manual screening model
-- Enhanced position details with live charts and analysis
+- Enhanced position details with live charts
 - Publish backtest to live functionality
-- Updated settings page showing active models
+- Progress tracking for backtests
+- Modular endpoint structure
 """
 
-import os
-import asyncio
 import logging
-from typing import Optional, List
+from typing import Optional
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 import uvicorn
 
-# Import enhanced dashboard templates
+# Import HTML templates
 from enhanced_dashboard import ENHANCED_DASHBOARD_HTML
 from enhanced_settings import ENHANCED_SETTINGS_HTML
 from enhanced_backtest import ENHANCED_BACKTEST_HTML
@@ -25,8 +26,10 @@ from enhanced_backtest import ENHANCED_BACKTEST_HTML
 # Import core modules
 from config import settings
 from settings_manager import settings_manager
-from position_analyzer import PositionAnalyzer, get_live_price_data
-from manual_screener import ManualScreener
+from position_analyzer import PositionAnalyzer
+
+# Import modular endpoints
+from backtest_endpoints import router as backtest_router
 
 # Configure logging
 logging.basicConfig(
@@ -41,6 +44,9 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Enhanced Trading Bot API")
 
+# Include backtest endpoints from separate module
+app.include_router(backtest_router)
+
 # ============================================================================
 # GLOBAL STATE
 # ============================================================================
@@ -50,7 +56,12 @@ position_analyzer: Optional[PositionAnalyzer] = None
 
 # Initialize position analyzer with IEX feed (free tier)
 try:
-    position_analyzer = PositionAnalyzer(settings.alpaca_key, settings.alpaca_secret, feed="iex")
+    position_analyzer = PositionAnalyzer(
+        settings.alpaca_key,
+        settings.alpaca_secret,
+        feed="iex"
+    )
+    logger.info("✅ Position analyzer initialized")
 except Exception as e:
     logger.error(f"Failed to initialize position analyzer: {e}")
 
@@ -58,21 +69,11 @@ except Exception as e:
 # PYDANTIC MODELS
 # ============================================================================
 
-class ComprehensiveBacktestParams(BaseModel):
-    screener_model: str
-    screener_params: dict
-    day_model: str
-    day_model_params: dict
-    top_n_stocks: int
-    min_score: float
-    force_execution: bool
-    days: int
-    initial_capital: float
-    stock_universe: Optional[List[str]] = None
-
 class RiskParamsUpdate(BaseModel):
+    """Risk parameters update model"""
     max_usd_per_order: float
     max_daily_loss: float
+
 
 # ============================================================================
 # HTML PAGE ENDPOINTS
@@ -83,18 +84,21 @@ async def dashboard():
     """Serve enhanced dashboard with position details"""
     return ENHANCED_DASHBOARD_HTML
 
+
 @app.get("/settings", response_class=HTMLResponse)
 async def settings_page():
     """Serve enhanced settings page showing active models"""
     return ENHANCED_SETTINGS_HTML
+
 
 @app.get("/backtest", response_class=HTMLResponse)
 async def backtest_page():
     """Serve enhanced backtest page with publish to live"""
     return ENHANCED_BACKTEST_HTML
 
+
 # ============================================================================
-# API ENDPOINTS - EXISTING
+# API ENDPOINTS - SYSTEM STATUS
 # ============================================================================
 
 @app.get("/health")
@@ -124,6 +128,11 @@ async def health_check():
     except Exception as e:
         logger.error(f"Health check failed: {e}")
         raise HTTPException(500, f"Health check failed: {str(e)}")
+
+
+# ============================================================================
+# API ENDPOINTS - POSITIONS
+# ============================================================================
 
 @app.get("/positions")
 async def get_positions():
@@ -156,9 +165,6 @@ async def get_positions():
         logger.error(f"Failed to get positions: {e}")
         raise HTTPException(500, f"Failed to get positions: {str(e)}")
 
-# ============================================================================
-# API ENDPOINTS - NEW ENHANCEMENTS
-# ============================================================================
 
 @app.get("/api/position-details/{symbol}")
 async def get_position_details(symbol: str):
@@ -215,181 +221,74 @@ async def get_position_details(symbol: str):
         traceback.print_exc()
         raise HTTPException(500, f"Failed to analyze position: {str(e)}")
 
-@app.get("/api/live-chart/{symbol}")
-async def get_live_chart(symbol: str):
-    """Get live chart data for a symbol"""
-    try:
-        chart_data = get_live_price_data(symbol, settings.alpaca_key, settings.alpaca_secret)
-        return chart_data
-    except Exception as e:
-        logger.error(f"Failed to get chart data for {symbol}: {e}")
-        raise HTTPException(500, f"Failed to get chart data: {str(e)}")
 
-@app.get("/api/active-config")
-async def get_active_config():
-    """Get currently active trading configuration"""
-    try:
-        config = settings_manager.get_active_config()
-        return config
-    except Exception as e:
-        logger.error(f"Failed to get active config: {e}")
-        raise HTTPException(500, f"Failed to get config: {str(e)}")
+# ============================================================================
+# API ENDPOINTS - SETTINGS
+# ============================================================================
 
-@app.post("/api/publish-to-live")
-async def publish_to_live(params: ComprehensiveBacktestParams):
+@app.get("/api/settings")
+async def get_settings():
+    """Get current trading settings"""
+    try:
+        active_config = settings_manager.get_active_config()
+        return {
+            'status': 'success',
+            'settings': active_config
+        }
+    except Exception as e:
+        logger.error(f"Failed to get settings: {e}")
+        raise HTTPException(500, f"Failed to get settings: {str(e)}")
+
+
+@app.post("/api/publish-backtest")
+async def publish_backtest(config: dict):
     """Publish backtest configuration to live trading"""
     try:
-        # Convert params to dict
-        config = {
-            'screener_model': params.screener_model,
-            'screener_params': params.screener_params,
-            'day_model': params.day_model,
-            'day_model_params': params.day_model_params,
-            'top_n_stocks': params.top_n_stocks,
-            'min_score': params.min_score,
-            'force_execution': params.force_execution,
-            'days': params.days,
-            'initial_capital': params.initial_capital
-        }
-        
-        # Publish to settings manager
         result = settings_manager.publish_backtest_settings(config)
-        
-        logger.info(f"Published settings to live: {params.screener_model} + {params.day_model}")
-        
-        return result
+        return {
+            'status': 'success',
+            'message': 'Configuration published to live trading',
+            'new_settings': result
+        }
     except Exception as e:
-        logger.error(f"Failed to publish to live: {e}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(500, f"Failed to publish: {str(e)}")
+        logger.error(f"Failed to publish settings: {e}")
+        raise HTTPException(500, f"Failed to publish settings: {str(e)}")
+
 
 @app.post("/api/update-risk-params")
 async def update_risk_params(params: RiskParamsUpdate):
     """Update risk management parameters"""
     try:
-        settings_manager.update_risk_params(
-            max_usd_per_order=params.max_usd_per_order,
-            max_daily_loss=params.max_daily_loss
-        )
-        
-        return {'status': 'success', 'message': 'Risk parameters updated'}
+        settings_manager.update_risk_params({
+            'max_usd_per_order': params.max_usd_per_order,
+            'max_daily_loss': params.max_daily_loss
+        })
+        return {
+            'status': 'success',
+            'message': 'Risk parameters updated',
+            'new_params': {
+                'max_usd_per_order': params.max_usd_per_order,
+                'max_daily_loss': params.max_daily_loss
+            }
+        }
     except Exception as e:
         logger.error(f"Failed to update risk params: {e}")
         raise HTTPException(500, f"Failed to update risk params: {str(e)}")
 
-@app.post("/api/comprehensive-backtest")
-async def run_comprehensive_backtest(params: ComprehensiveBacktestParams):
-    """Run comprehensive backtest with daily screening + intraday trading"""
-    try:
-        from datetime import datetime, timedelta
-        from integrated_backtester import IntegratedBacktester
-        from stock_universe import get_full_universe
-        from manual_screener import ManualScreener
-        
-        logger.info(f"Starting comprehensive backtest: {params.screener_model} + {params.day_model}")
-        
-        # Create backtester with proper authentication
-        backtester = IntegratedBacktester(
-            api_key=settings.alpaca_key,
-            api_secret=settings.alpaca_secret,
-            initial_capital=params.initial_capital
-        )
-        
-        # Date range
-        end_date = datetime.now()
-        start_date = end_date - timedelta(days=params.days)
-        
-        # Handle manual selection
-        if params.screener_model == 'manual':
-            if not params.stock_universe:
-                raise HTTPException(400, "Manual selection requires stock_universe parameter")
-            universe = params.stock_universe
-        else:
-            # Use full universe if not manual
-            universe = params.stock_universe if params.stock_universe else get_full_universe()
-        
-        logger.info(f"Backtest params: {params.days} days, {len(universe)} stocks, top {params.top_n_stocks}")
-        
-        # Run backtest
-        results = backtester.run(
-            screener_model=params.screener_model,
-            screener_params=params.screener_params,
-            day_model=params.day_model,
-            day_model_params=params.day_model_params,
-            start_date=start_date,
-            end_date=end_date,
-            stock_universe=universe,
-            top_n=params.top_n_stocks,
-            min_score=params.min_score,
-            force_execution=params.force_execution
-        )
-        
-        # Format trades for JSON
-        trades_list = []
-        if 'trades' in results:
-            for trade in results['trades']:
-                trades_list.append({
-                    'symbol': trade['symbol'],
-                    'action': trade['action'],
-                    'shares': trade['shares'],
-                    'price': trade['price'],
-                    'timestamp': trade['timestamp'].isoformat() if hasattr(trade['timestamp'], 'isoformat') else str(trade['timestamp']),
-                    'reason': trade['reason'],
-                    'pnl': trade.get('pnl', 0),
-                    'pnl_pct': trade.get('pnl_pct', 0)
-                })
-        
-        # Return results
-        response = {
-            'strategy': f"{params.screener_model} + {params.day_model}",
-            'initial_capital': results['initial_capital'],
-            'final_value': results['final_value'],
-            'total_return': results['total_return'],
-            'total_return_pct': results['total_return_pct'],
-            'total_trades': results['total_trades'],
-            'winning_trades': results['winning_trades'],
-            'losing_trades': results['losing_trades'],
-            'win_rate': results['win_rate'],
-            'avg_win': results['avg_win'],
-            'avg_loss': results['avg_loss'],
-            'profit_factor': results['profit_factor'],
-            'sharpe_ratio': results['sharpe_ratio'],
-            'max_drawdown': results['max_drawdown'],
-            'max_drawdown_pct': results['max_drawdown_pct'],
-            'trades': trades_list
-        }
-        
-        # Add screening-specific metrics
-        if 'unique_stocks_traded' in results:
-            response['unique_stocks_traded'] = results['unique_stocks_traded']
-        if 'screening_sessions' in results:
-            response['screening_sessions'] = results['screening_sessions']
-        
-        return response
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Backtest failed: {e}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(500, f"Backtest failed: {str(e)}")
 
 # ============================================================================
-# STARTUP
+# STARTUP & SHUTDOWN EVENTS
 # ============================================================================
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize bot on startup"""
+    """Initialize on startup"""
     logger.info("Starting Enhanced Trading Bot API")
     logger.info(f"Alpaca Paper Mode: {settings.paper}")
     logger.info(f"Trading Enabled: {settings.allow_trading}")
     
-    # Validate credentials
     if not settings.alpaca_key or not settings.alpaca_secret:
-        logger.error("⚠️  ERROR: Alpaca credentials not found!")
+        logger.error("❌ Missing Alpaca credentials!")
         logger.error("   Set ALPACA_KEY and ALPACA_SECRET environment variables")
         return
     
@@ -397,6 +296,7 @@ async def startup_event():
     logger.info("📊 Dashboard available at http://localhost:10000")
     logger.info("⚙️  Settings available at http://localhost:10000/settings")
     logger.info("🧪 Backtesting available at http://localhost:10000/backtest")
+
 
 # ============================================================================
 # MAIN ENTRY POINT

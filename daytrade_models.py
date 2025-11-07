@@ -332,6 +332,7 @@ class PatternRecognition(BaseDayTradeModel):
             return None
         
         highs = bars['high'].tolist()
+        lows = bars['low'].tolist()  # 🔧 FIX: Added missing variable definition
         closes = bars['close'].tolist()
         
         # Find two similar peaks
@@ -473,102 +474,99 @@ class PatternRecognition(BaseDayTradeModel):
             return None
         
         closes = bars['close'].tolist()
-        highs = bars['high'].tolist()
+        volumes = bars['volume'].tolist()
         
-        # Find cup (U-shape over ~40 bars)
-        cup_start = closes[-60]
-        cup_mid = min(closes[-60:-20])
-        cup_end = closes[-20]
+        # Cup: U-shaped price movement
+        early_high = max(closes[:20])
+        mid_low = min(closes[20:40])
+        recent_high = max(closes[40:55])
         
-        # Cup should be U-shaped: start and end similar, middle lower
-        if abs(cup_start - cup_end) / cup_start > 0.05:  # Not level
-            return None
-        
-        if cup_mid > cup_start * 0.95:  # Not deep enough
-            return None
-        
-        # Find handle (small consolidation)
-        handle_high = max(highs[-20:])
-        handle_low = min(closes[-20:])
-        handle_range = (handle_high - handle_low) / handle_high
-        
-        if handle_range < 0.08:  # Tight handle
-            current_price = closes[-1]
-            
-            # Breakout above handle
-            if current_price > handle_high * 1.002:
-                return TradeSignal(
-                    symbol=symbol,
-                    action='buy',
-                    price=current_price,
-                    confidence=0.82,
-                    reason=f"Cup & handle breakout above ${handle_high:.2f}",
-                    stop_loss=handle_high * 0.99,
-                    take_profit=current_price * 1.05
-                )
+        # Validate cup shape
+        if mid_low < early_high * 0.90 and recent_high > early_high * 0.95:
+            # Handle: slight pullback
+            handle_low = min(closes[-10:])
+            if handle_low > mid_low * 1.05:  # Handle should be shallow
+                current_price = closes[-1]
+                
+                # Breakout above cup high
+                if current_price > recent_high * 1.002:
+                    avg_vol = fmean(volumes[-20:-5])
+                    current_vol = fmean(volumes[-5:])
+                    volume_surge = current_vol / avg_vol if avg_vol > 0 else 0
+                    
+                    if volume_surge > 1.3:
+                        return TradeSignal(
+                            symbol=symbol,
+                            action='buy',
+                            price=current_price,
+                            confidence=0.82,
+                            reason=f"Cup & handle breakout at ${recent_high:.2f}",
+                            stop_loss=handle_low,
+                            take_profit=current_price * 1.045
+                        )
         
         return None
     
     def _detect_engulfing(self, symbol: str, bars: pd.DataFrame) -> Optional[TradeSignal]:
-        """Detect bullish/bearish engulfing candles"""
-        if len(bars) < 5:
+        """Detect bullish/bearish engulfing candle pattern"""
+        if len(bars) < 10:
             return None
         
-        # Get last two bars
+        # Get last two candles
         prev_bar = bars.iloc[-2]
         curr_bar = bars.iloc[-1]
         
-        prev_body = abs(prev_bar['close'] - prev_bar['open'])
-        curr_body = abs(curr_bar['close'] - curr_bar['open'])
+        prev_open = prev_bar['open']
+        prev_close = prev_bar['close']
+        curr_open = curr_bar['open']
+        curr_close = curr_bar['close']
+        
+        volumes = bars['volume'].tolist()
         
         # Bullish engulfing
-        if (prev_bar['close'] < prev_bar['open'] and  # Previous bearish
-            curr_bar['close'] > curr_bar['open'] and  # Current bullish
-            curr_body > prev_body * 1.5 and  # Much larger
-            curr_bar['open'] < prev_bar['close'] and  # Opens below prev close
-            curr_bar['close'] > prev_bar['open']):  # Closes above prev open
-            
-            return TradeSignal(
-                symbol=symbol,
-                action='buy',
-                price=curr_bar['close'],
-                confidence=0.72,
-                reason="Bullish engulfing candle",
-                stop_loss=curr_bar['low'] * 0.995,
-                take_profit=curr_bar['close'] * 1.03
-            )
+        if prev_close < prev_open:  # Previous candle red
+            if curr_close > curr_open:  # Current candle green
+                if curr_open <= prev_close and curr_close >= prev_open:  # Engulfs
+                    # Volume confirmation
+                    if volumes[-1] > fmean(volumes[-10:-1]) * 1.5:
+                        return TradeSignal(
+                            symbol=symbol,
+                            action='buy',
+                            price=curr_close,
+                            confidence=0.72,
+                            reason="Bullish engulfing with volume",
+                            stop_loss=min(prev_close, curr_open) * 0.995,
+                            take_profit=curr_close * 1.03
+                        )
         
         # Bearish engulfing
-        elif (prev_bar['close'] > prev_bar['open'] and  # Previous bullish
-              curr_bar['close'] < curr_bar['open'] and  # Current bearish
-              curr_body > prev_body * 1.5 and
-              curr_bar['open'] > prev_bar['close'] and
-              curr_bar['close'] < prev_bar['open']):
-            
-            return TradeSignal(
-                symbol=symbol,
-                action='sell',
-                price=curr_bar['close'],
-                confidence=0.72,
-                reason="Bearish engulfing candle",
-                stop_loss=curr_bar['high'] * 1.005,
-                take_profit=curr_bar['close'] * 0.97
-            )
+        elif prev_close > prev_open:  # Previous candle green
+            if curr_close < curr_open:  # Current candle red
+                if curr_open >= prev_close and curr_close <= prev_open:  # Engulfs
+                    if volumes[-1] > fmean(volumes[-10:-1]) * 1.5:
+                        return TradeSignal(
+                            symbol=symbol,
+                            action='sell',
+                            price=curr_close,
+                            confidence=0.72,
+                            reason="Bearish engulfing with volume",
+                            stop_loss=max(prev_close, curr_open) * 1.005,
+                            take_profit=curr_close * 0.97
+                        )
         
         return None
     
     def should_exit(self, position: dict, current_bar: dict, time: datetime) -> Tuple[bool, str]:
-        """Exit based on stop loss, take profit, or time"""
+        """Exit on stop/target or time"""
         current_price = current_bar['close']
-        stop_loss = position.get('stop_loss')
-        take_profit = position.get('take_profit')
+        entry_price = position['entry_price']
         
         # Stop loss
-        if stop_loss and current_price <= stop_loss:
+        if current_price <= entry_price * 0.98:
             return True, "Stop loss"
         
         # Take profit
-        if take_profit and current_price >= take_profit:
+        if current_price >= entry_price * 1.035:
             return True, "Take profit"
         
         # Time exit
@@ -579,10 +577,9 @@ class PatternRecognition(BaseDayTradeModel):
 
 
 class VWAPBounce(BaseDayTradeModel):
-    """Trade bounces off VWAP with volume confirmation"""
+    """Trade bounces off VWAP with volume"""
     
-    def __init__(self, vwap_threshold: float = 0.002, 
-                 volume_surge: float = 1.5):
+    def __init__(self, vwap_threshold: float = 0.002, volume_surge: float = 1.5):
         super().__init__("VWAP_Bounce")
         self.vwap_threshold = vwap_threshold
         self.volume_surge = volume_surge
@@ -595,7 +592,7 @@ class VWAPBounce(BaseDayTradeModel):
     def generate_signal(self, symbol: str, minute_bars: pd.DataFrame,
                        screener_data: dict) -> Optional[TradeSignal]:
         """Generate signal on VWAP bounce"""
-        if len(minute_bars) < 20:
+        if len(minute_bars) < 30:
             return None
         
         vwap = self.calculate_vwap(minute_bars)
