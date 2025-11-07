@@ -1,6 +1,7 @@
 """
 Backtest API Endpoints Module
 Includes SSE streaming for real-time progress updates
+FIXED: Uses OptimizedBacktester instead of IntegratedBacktester
 """
 
 import logging
@@ -13,7 +14,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from config import settings
-from integrated_backtester import IntegratedBacktester
+from integrated_backtester import OptimizedBacktester  # ← FIXED: Changed from IntegratedBacktester
 from stock_universe import get_full_universe
 
 # Setup logging
@@ -66,8 +67,8 @@ async def comprehensive_backtest_stream(
             
             logger.info(f"🚀 Starting SSE backtest: {screener_model} + {day_model}")
             
-            # Create backtester
-            backtester = IntegratedBacktester(
+            # Create backtester - FIXED: Using OptimizedBacktester
+            backtester = OptimizedBacktester(
                 api_key=settings.alpaca_key,
                 api_secret=settings.alpaca_secret,
                 initial_capital=initial_capital
@@ -100,11 +101,10 @@ async def comprehensive_backtest_stream(
                     'detail': detail
                 }
                 yield f"data: {json.dumps(update_data)}\n\n"
-                await asyncio.sleep(0.05)  # Small delay to prevent overwhelming client
+                await asyncio.sleep(0.05)
                 logger.info(f"[{progress_pct}%] {message}")
             
             # Run backtest with streaming progress
-            # Note: We need to make the backtester run async-compatible
             yield f"data: {json.dumps({'type': 'progress', 'percent': 5, 'message': 'Pre-fetching historical data...', 'detail': f'Bulk loading {len(universe)} stocks (much faster!)'})}\n\n"
             await asyncio.sleep(0.1)
             
@@ -209,8 +209,8 @@ async def comprehensive_backtest_stream(
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",  # Disable nginx buffering
-            "Access-Control-Allow-Origin": "*"  # CORS for SSE
+            "X-Accel-Buffering": "no",
+            "Access-Control-Allow-Origin": "*"
         }
     )
 
@@ -228,8 +228,8 @@ async def run_comprehensive_backtest(params: ComprehensiveBacktestParams):
     try:
         logger.info(f"🚀 Starting comprehensive backtest: {params.screener_model} + {params.day_model}")
         
-        # Create backtester with proper authentication
-        backtester = IntegratedBacktester(
+        # Create backtester - FIXED: Using OptimizedBacktester
+        backtester = OptimizedBacktester(
             api_key=settings.alpaca_key,
             api_secret=settings.alpaca_secret,
             initial_capital=params.initial_capital
