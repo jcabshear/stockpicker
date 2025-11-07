@@ -1,6 +1,6 @@
 """
-Modular Autonomous Trading Bot with Auto Stock Selection
-Clean main.py with separated dashboard templates
+Modular Autonomous Trading Bot with Auto Stock Selection & Comprehensive Backtesting
+Complete main.py with all integrations
 """
 
 import os
@@ -20,6 +20,7 @@ import sys
 sys.path.insert(0, '/home/claude')
 
 from config import settings
+from stock_universe import get_full_universe
 
 # Dynamic imports
 try:
@@ -92,6 +93,25 @@ class BacktestParams(BaseModel):
     min_stock_score: float = 60
     top_n_stocks: int = 3
     screen_frequency: str = "daily"  # 'daily' or 'weekly'
+
+class ComprehensiveBacktestParams(BaseModel):
+    # Screening model
+    screener_model: str  # 'technical_momentum', 'gap_volatility', 'trend_strength'
+    screener_params: dict = {}
+    
+    # Day trading model
+    day_model: str  # 'ma_crossover', 'pattern_recognition', 'vwap_bounce'
+    day_model_params: dict = {}
+    
+    # Selection criteria
+    top_n_stocks: int = 3
+    min_score: float = 60
+    force_execution: bool = False  # If False, skip low-confidence trades
+    
+    # Backtest parameters
+    days: int = 30
+    initial_capital: float = 10000
+    stock_universe: list = None  # If None, uses full 300+ stock universe
 
 # ============================================================================
 # FASTAPI APP
@@ -346,6 +366,104 @@ async def run_backtest(params: BacktestParams):
         raise HTTPException(500, f"Backtest failed: {str(e)}")
 
 
+@app.post("/api/comprehensive-backtest")
+async def run_comprehensive_backtest(params: ComprehensiveBacktestParams):
+    """Run comprehensive backtest with daily screening + intraday trading"""
+    try:
+        from datetime import datetime, timedelta
+        from integrated_backtester import IntegratedBacktester
+        
+        logger.info(f"Starting comprehensive backtest: {params.screener_model} + {params.day_model}")
+        
+        # Create backtester
+        backtester = IntegratedBacktester(
+            api_key=settings.alpaca_key,
+            api_secret=settings.alpaca_secret,
+            initial_capital=params.initial_capital
+        )
+        
+        # Date range
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=params.days)
+        
+        # Stock universe (use full 300+ if not specified)
+        universe = params.stock_universe if params.stock_universe else get_full_universe()
+        
+        logger.info(f"Backtest params: {params.days} days, {len(universe)} stocks, top {params.top_n_stocks}")
+        
+        # Run backtest
+        results = backtester.run(
+            screener_model=params.screener_model,
+            screener_params=params.screener_params,
+            day_model=params.day_model,
+            day_model_params=params.day_model_params,
+            start_date=start_date,
+            end_date=end_date,
+            stock_universe=universe,
+            top_n=params.top_n_stocks,
+            min_score=params.min_score,
+            force_execution=params.force_execution
+        )
+        
+        # Format trades for JSON
+        trades_list = []
+        if 'trades' in results:
+            for trade in results['trades']:
+                trades_list.append({
+                    'symbol': trade['symbol'],
+                    'action': trade['action'],
+                    'shares': trade['shares'],
+                    'price': trade['price'],
+                    'timestamp': trade['timestamp'].isoformat() if hasattr(trade['timestamp'], 'isoformat') else str(trade['timestamp']),
+                    'reason': trade['reason'],
+                    'pnl': trade.get('pnl', 0),
+                    'pnl_pct': trade.get('pnl_pct', 0)
+                })
+        
+        # Format daily results
+        daily_list = []
+        if 'daily_results' in results:
+            for day in results['daily_results']:
+                daily_list.append({
+                    'date': day['date'].isoformat() if hasattr(day['date'], 'isoformat') else str(day['date']),
+                    'screened_count': day['screened_count'],
+                    'selected_symbols': day['selected_symbols'],
+                    'entries': day['entries'],
+                    'exits': day['exits'],
+                    'day_pnl': day['day_pnl'],
+                    'ending_cash': day['ending_cash']
+                })
+        
+        logger.info(f"Backtest complete: {results['total_return_pct']:.2f}% return, {results['total_trades']} trades")
+        
+        return {
+            "strategy": results['strategy'],
+            "initial_capital": results['initial_capital'],
+            "final_value": results['final_value'],
+            "total_return": results['total_return'],
+            "total_return_pct": results['total_return_pct'],
+            "total_trades": results['total_trades'],
+            "winning_trades": results['winning_trades'],
+            "losing_trades": results['losing_trades'],
+            "win_rate": results['win_rate'],
+            "avg_win": results['avg_win'],
+            "avg_loss": results['avg_loss'],
+            "profit_factor": results['profit_factor'],
+            "sharpe_ratio": results['sharpe_ratio'],
+            "max_drawdown_pct": results['max_drawdown_pct'],
+            "unique_stocks_traded": results['unique_stocks_traded'],
+            "screening_sessions": results['screening_sessions'],
+            "trades": trades_list,
+            "daily_results": daily_list
+        }
+        
+    except Exception as e:
+        logger.error(f"Comprehensive backtest failed: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, f"Backtest failed: {str(e)}")
+
+
 @app.get("/health")
 def health():
     """Health check endpoint"""
@@ -563,7 +681,7 @@ if __name__ == "__main__":
     port = int(os.getenv('PORT', 10000))
     
     print("=" * 80)
-    print("STARTING TRADING BOT WITH AUTO STOCK SELECTION")
+    print("STARTING TRADING BOT WITH COMPREHENSIVE BACKTESTING")
     print("=" * 80)
     logger.info(f"Starting application on port {port}")
     
