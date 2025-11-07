@@ -4,6 +4,8 @@ Key optimizations:
 1. Batch API requests to fetch all stock data at once
 2. Detailed progress messages for each step
 3. Cache daily data to avoid re-fetching
+
+FIXED: Added synchronous 'run' method to work with endpoints
 """
 
 import pandas as pd
@@ -110,6 +112,79 @@ class OptimizedBacktester:
         except Exception as e:
             print(f"Warning: Batch minute fetch failed: {e}")
             return {symbol: pd.DataFrame() for symbol in symbols}
+    
+    def run(
+        self,
+        screener_model: str,
+        screener_params: dict,
+        day_model: str,
+        day_model_params: dict,
+        start_date,
+        end_date,
+        stock_universe: list,
+        top_n: int = 3,
+        min_score: float = 60,
+        force_execution: bool = False,
+        progress_callback=None
+    ) -> dict:
+        """
+        Synchronous wrapper for run_with_detailed_progress
+        This allows the backtester to be called from both sync and async contexts
+        
+        ADDED: This method was missing and causing the AttributeError
+        """
+        import asyncio
+        
+        # Create a new event loop if we're not in an async context
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # We're already in an async context, need to create new loop in thread
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(
+                        asyncio.run,
+                        self.run_with_detailed_progress(
+                            screener_model=screener_model,
+                            screener_params=screener_params,
+                            day_model=day_model,
+                            day_model_params=day_model_params,
+                            start_date=start_date,
+                            end_date=end_date,
+                            stock_universe=stock_universe,
+                            top_n=top_n,
+                            min_score=min_score,
+                            force_execution=force_execution,
+                            progress_callback=progress_callback
+                        )
+                    )
+                    return future.result()
+        except RuntimeError:
+            # No event loop, create one
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        # Run the async method
+        try:
+            return loop.run_until_complete(
+                self.run_with_detailed_progress(
+                    screener_model=screener_model,
+                    screener_params=screener_params,
+                    day_model=day_model,
+                    day_model_params=day_model_params,
+                    start_date=start_date,
+                    end_date=end_date,
+                    stock_universe=stock_universe,
+                    top_n=top_n,
+                    min_score=min_score,
+                    force_execution=force_execution,
+                    progress_callback=progress_callback
+                )
+            )
+        finally:
+            # Only close if we created it
+            if not loop.is_running():
+                loop.close()
     
     async def run_with_detailed_progress(
         self,
@@ -227,18 +302,6 @@ class OptimizedBacktester:
                     f"Trading: {', '.join(selected_symbols)}"
                 )
             
-            # === RANKING DISPLAY ===
-            if progress_callback:
-                ranking_detail = "\n".join([
-                    f"#{i+1}: {s['symbol']} (Score: {s['score']:.1f}) - {s.get('reason', 'N/A')[:50]}"
-                    for i, s in enumerate(selected)
-                ])
-                await progress_callback(
-                    f"Day {day_count}: Stock rankings",
-                    base_progress + 3,
-                    ranking_detail
-                )
-            
             # === TRADING SIMULATION ===
             for idx, stock_info in enumerate(selected, 1):
                 symbol = stock_info['symbol']
@@ -285,18 +348,43 @@ class OptimizedBacktester:
             )
         
         # Calculate results
+        final_value = cash + sum(pos.get('current_price', 0) * pos.get('shares', 0) for pos in positions.values())
+        total_return = final_value - self.initial_capital
+        total_return_pct = (total_return / self.initial_capital) * 100
+        
+        # Calculate trade statistics
+        winning_trades = sum(1 for t in all_trades if t.get('pnl', 0) > 0)
+        losing_trades = sum(1 for t in all_trades if t.get('pnl', 0) < 0)
+        win_rate = winning_trades / len(all_trades) if all_trades else 0
+        
+        avg_win = sum(t['pnl'] for t in all_trades if t.get('pnl', 0) > 0) / winning_trades if winning_trades else 0
+        avg_loss = abs(sum(t['pnl'] for t in all_trades if t.get('pnl', 0) < 0) / losing_trades) if losing_trades else 0
+        profit_factor = (winning_trades * avg_win) / (losing_trades * avg_loss) if losing_trades and avg_loss else 0
+        
         results = {
+            'strategy': f"{screener_model} + {day_model}",
             'initial_capital': self.initial_capital,
-            'final_value': cash + sum(pos['current_price'] * pos['shares'] for pos in positions.values()),
+            'final_value': final_value,
+            'total_return': total_return,
+            'total_return_pct': total_return_pct,
+            'total_trades': len(all_trades),
+            'winning_trades': winning_trades,
+            'losing_trades': losing_trades,
+            'win_rate': win_rate,
+            'avg_win': avg_win,
+            'avg_loss': avg_loss,
+            'profit_factor': profit_factor,
             'trades': all_trades,
-            'daily_results': daily_results
+            'daily_results': daily_results,
+            'unique_stocks_traded': len(set(t.get('symbol', '') for t in all_trades)),
+            'screening_sessions': completed_days
         }
         
         if progress_callback:
             await progress_callback(
                 "Backtest complete!",
                 100,
-                f"Final value: ${results['final_value']:,.2f}"
+                f"Final value: ${results['final_value']:,.2f} ({total_return_pct:+.2f}%)"
             )
         
         return results
