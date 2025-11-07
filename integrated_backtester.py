@@ -5,7 +5,7 @@ Key optimizations:
 2. Detailed progress messages for each step
 3. Cache daily data to avoid re-fetching
 
-FIXED: Added synchronous 'run' method to work with endpoints
+FIXED: Added synchronous 'run' method AND proper async/sync callback handling
 """
 
 import pandas as pd
@@ -16,6 +16,7 @@ from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
 from alpaca.data.enums import DataFeed
 import asyncio
+import inspect
 
 
 class OptimizedBacktester:
@@ -28,6 +29,20 @@ class OptimizedBacktester:
         self.initial_capital = initial_capital
         self.feed = DataFeed.IEX
         self.data_cache = {}  # Cache fetched data
+    
+    async def _call_progress_callback(self, callback: Optional[Callable], *args, **kwargs):
+        """
+        Helper to call progress callback whether it's sync or async
+        """
+        if callback is None:
+            return
+        
+        # Check if it's an async function
+        if inspect.iscoroutinefunction(callback):
+            await callback(*args, **kwargs)
+        else:
+            # It's a sync function, just call it normally
+            callback(*args, **kwargs)
     
     def fetch_bulk_daily_data(self, symbols: List[str], days_back: int = 60) -> Dict[str, pd.DataFrame]:
         """
@@ -204,6 +219,7 @@ class OptimizedBacktester:
         Run backtest with extremely detailed progress updates
         
         Progress callback receives: (message, progress_pct, detail)
+        Can be either sync or async function
         """
         from screening_models import get_screener
         from daytrade_models import get_day_trade_model
@@ -216,23 +232,24 @@ class OptimizedBacktester:
                 total_days += 1
             temp_date += timedelta(days=1)
         
-        if progress_callback:
-            await progress_callback(
-                "Pre-fetching historical data for screening...",
-                5,
-                f"Fetching {len(stock_universe)} stocks in bulk (much faster!)"
-            )
+        # Use helper for all progress callbacks
+        await self._call_progress_callback(
+            progress_callback,
+            "Pre-fetching historical data for screening...",
+            5,
+            f"Fetching {len(stock_universe)} stocks in bulk (much faster!)"
+        )
         
         # OPTIMIZATION: Pre-fetch ALL daily data at once
         print(f"📊 Pre-fetching data for {len(stock_universe)} stocks...")
         bulk_daily_data = self.fetch_bulk_daily_data(stock_universe, days_back=60)
         
-        if progress_callback:
-            await progress_callback(
-                "Data pre-fetch complete!",
-                10,
-                f"Successfully loaded data for screening"
-            )
+        await self._call_progress_callback(
+            progress_callback,
+            "Data pre-fetch complete!",
+            10,
+            f"Successfully loaded data for screening"
+        )
         
         # Initialize
         cash = self.initial_capital
@@ -262,12 +279,12 @@ class OptimizedBacktester:
             day_str = current_date.strftime("%Y-%m-%d")
             
             # === SCREENING PHASE ===
-            if progress_callback:
-                await progress_callback(
-                    f"Day {day_count}/{total_days}: Screening stocks...",
-                    base_progress,
-                    f"Analyzing {len(stock_universe)} stocks for {day_str}"
-                )
+            await self._call_progress_callback(
+                progress_callback,
+                f"Day {day_count}/{total_days}: Screening stocks...",
+                base_progress,
+                f"Analyzing {len(stock_universe)} stocks for {day_str}"
+            )
             
             # Screen with pre-fetched data
             screened = await self._screen_with_bulk_data(
@@ -282,12 +299,12 @@ class OptimizedBacktester:
             )
             
             if not screened:
-                if progress_callback:
-                    await progress_callback(
-                        f"Day {day_count}: No stocks qualified",
-                        base_progress + 1,
-                        f"Minimum score {min_score} not met, skipping day"
-                    )
+                await self._call_progress_callback(
+                    progress_callback,
+                    f"Day {day_count}: No stocks qualified",
+                    base_progress + 1,
+                    f"Minimum score {min_score} not met, skipping day"
+                )
                 current_date += timedelta(days=1)
                 continue
             
@@ -295,44 +312,44 @@ class OptimizedBacktester:
             selected = screened[:top_n]
             selected_symbols = [s['symbol'] for s in selected]
             
-            if progress_callback:
-                await progress_callback(
-                    f"Day {day_count}: Selected top {len(selected)} stocks",
-                    base_progress + 2,
-                    f"Trading: {', '.join(selected_symbols)}"
-                )
+            await self._call_progress_callback(
+                progress_callback,
+                f"Day {day_count}: Selected top {len(selected)} stocks",
+                base_progress + 2,
+                f"Trading: {', '.join(selected_symbols)}"
+            )
             
             # === TRADING SIMULATION ===
             for idx, stock_info in enumerate(selected, 1):
                 symbol = stock_info['symbol']
                 
-                if progress_callback:
-                    await progress_callback(
-                        f"Day {day_count}: Trading {symbol} ({idx}/{len(selected)})",
-                        base_progress + 3 + idx,
-                        f"Fetching minute data and simulating intraday trades..."
-                    )
+                await self._call_progress_callback(
+                    progress_callback,
+                    f"Day {day_count}: Trading {symbol} ({idx}/{len(selected)})",
+                    base_progress + 3 + idx,
+                    f"Fetching minute data and simulating intraday trades..."
+                )
                 
                 # Fetch minute data (will use cache if available)
                 minute_data_dict = self.fetch_minute_data_batch([symbol], current_date)
                 symbol_minute_data = minute_data_dict.get(symbol)
                 
                 if symbol_minute_data is None or symbol_minute_data.empty:
-                    if progress_callback:
-                        await progress_callback(
-                            f"Day {day_count}: {symbol} - No data",
-                            base_progress + 4 + idx,
-                            "Skipping due to missing minute data"
-                        )
+                    await self._call_progress_callback(
+                        progress_callback,
+                        f"Day {day_count}: {symbol} - No data",
+                        base_progress + 4 + idx,
+                        "Skipping due to missing minute data"
+                    )
                     continue
                 
                 # Simulate trading for this stock
-                if progress_callback:
-                    await progress_callback(
-                        f"Day {day_count}: Simulating {symbol}",
-                        base_progress + 4 + idx,
-                        f"Running {day_model} model on {len(symbol_minute_data)} minute bars"
-                    )
+                await self._call_progress_callback(
+                    progress_callback,
+                    f"Day {day_count}: Simulating {symbol}",
+                    base_progress + 4 + idx,
+                    f"Running {day_model} model on {len(symbol_minute_data)} minute bars"
+                )
                 
                 # (Rest of trading simulation logic here...)
                 # This would include the actual day trading simulation
@@ -340,12 +357,12 @@ class OptimizedBacktester:
             current_date += timedelta(days=1)
         
         # Final progress
-        if progress_callback:
-            await progress_callback(
-                "Compiling results...",
-                95,
-                f"Processed {completed_days} trading days"
-            )
+        await self._call_progress_callback(
+            progress_callback,
+            "Compiling results...",
+            95,
+            f"Processed {completed_days} trading days"
+        )
         
         # Calculate results
         final_value = cash + sum(pos.get('current_price', 0) * pos.get('shares', 0) for pos in positions.values())
@@ -380,12 +397,12 @@ class OptimizedBacktester:
             'screening_sessions': completed_days
         }
         
-        if progress_callback:
-            await progress_callback(
-                "Backtest complete!",
-                100,
-                f"Final value: ${results['final_value']:,.2f} ({total_return_pct:+.2f}%)"
-            )
+        await self._call_progress_callback(
+            progress_callback,
+            "Backtest complete!",
+            100,
+            f"Final value: ${results['final_value']:,.2f} ({total_return_pct:+.2f}%)"
+        )
         
         return results
     
@@ -409,12 +426,12 @@ class OptimizedBacktester:
             # Update progress every 10%
             if idx % (max(1, total_stocks // 10)) == 0:
                 pct_through = int((idx / total_stocks) * 100)
-                if progress_callback:
-                    await progress_callback(
-                        f"Day {day_num}: Screening progress {pct_through}%",
-                        base_progress,
-                        f"Analyzed {idx}/{total_stocks} stocks, {len(results)} qualified so far"
-                    )
+                await self._call_progress_callback(
+                    progress_callback,
+                    f"Day {day_num}: Screening progress {pct_through}%",
+                    base_progress,
+                    f"Analyzed {idx}/{total_stocks} stocks, {len(results)} qualified so far"
+                )
             
             df = bulk_data.get(symbol, pd.DataFrame())
             if df.empty:
