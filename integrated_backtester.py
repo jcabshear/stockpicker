@@ -71,7 +71,7 @@ class IntegratedBacktester:
             print(f"Error fetching minute data for {date.date()}: {e}")
             return {}
     
-    def simulate_trading_day(self, selected_stocks: List[dict], date: datetime,
+    def simulate_trading_day(self, selected_stocks: List, date: datetime,
                             day_model, cash: float, positions: dict, 
                             force_execution: bool) -> Tuple[float, dict, List[dict]]:
         """
@@ -83,7 +83,7 @@ class IntegratedBacktester:
         trades = []
         
         # Fetch minute data for selected stocks
-        symbols = [s['symbol'] for s in selected_stocks]
+        symbols = [s.symbol for s in selected_stocks]
         minute_data = self.fetch_minute_data(symbols, date)
         
         if not minute_data:
@@ -159,7 +159,7 @@ class IntegratedBacktester:
             
             # Look for new entries (only if not already in position)
             for stock in selected_stocks:
-                symbol = stock['symbol']
+                symbol = stock.symbol  # Use attribute access
                 
                 if symbol in positions:  # Already in position
                     continue
