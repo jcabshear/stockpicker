@@ -1,7 +1,7 @@
 """
 Backtest API Endpoints Module
 Includes SSE streaming for real-time progress updates
-FIXED: Uses OptimizedBacktester instead of IntegratedBacktester
+UNIVERSAL VERSION: Works with both IntegratedBacktester and OptimizedBacktester
 """
 
 import logging
@@ -14,8 +14,16 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from config import settings
-from integrated_backtester import OptimizedBacktester  # ← FIXED: Changed from IntegratedBacktester
 from stock_universe import get_full_universe
+
+# Try to import either class name
+try:
+    from integrated_backtester import IntegratedBacktester as Backtester
+except ImportError:
+    try:
+        from integrated_backtester import OptimizedBacktester as Backtester
+    except ImportError:
+        raise ImportError("Could not import backtester class. Please ensure integrated_backtester.py contains either IntegratedBacktester or OptimizedBacktester class.")
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -39,7 +47,7 @@ class ComprehensiveBacktestParams(BaseModel):
 
 
 # ============================================================================
-# SSE STREAMING ENDPOINT (NEW - Real-time Progress)
+# SSE STREAMING ENDPOINT (Real-time Progress)
 # ============================================================================
 
 @router.get("/comprehensive-backtest-stream")
@@ -67,8 +75,8 @@ async def comprehensive_backtest_stream(
             
             logger.info(f"🚀 Starting SSE backtest: {screener_model} + {day_model}")
             
-            # Create backtester - FIXED: Using OptimizedBacktester
-            backtester = OptimizedBacktester(
+            # Create backtester using the imported class (works with either name)
+            backtester = Backtester(
                 api_key=settings.alpaca_key,
                 api_secret=settings.alpaca_secret,
                 initial_capital=initial_capital
@@ -91,21 +99,7 @@ async def comprehensive_backtest_stream(
             
             logger.info(f"📊 Backtest params: {days} days, {len(universe)} stocks, top {top_n_stocks}")
             
-            # Progress callback for detailed updates
-            async def stream_progress(message: str, progress_pct: int, detail: str = ""):
-                """Send progress update via SSE"""
-                update_data = {
-                    'type': 'progress',
-                    'percent': progress_pct,
-                    'message': message,
-                    'detail': detail
-                }
-                yield f"data: {json.dumps(update_data)}\n\n"
-                await asyncio.sleep(0.05)
-                logger.info(f"[{progress_pct}%] {message}")
-            
-            # Run backtest with streaming progress
-            yield f"data: {json.dumps({'type': 'progress', 'percent': 5, 'message': 'Pre-fetching historical data...', 'detail': f'Bulk loading {len(universe)} stocks (much faster!)'})}\n\n"
+            yield f"data: {json.dumps({'type': 'progress', 'percent': 5, 'message': 'Starting backtest...', 'detail': 'Initializing models and preparing data'})}\n\n"
             await asyncio.sleep(0.1)
             
             # Run backtest in thread pool to avoid blocking
@@ -117,10 +111,13 @@ async def comprehensive_backtest_stream(
             
             def sync_progress_callback(message: str, progress_pct: int):
                 """Sync callback that puts updates in async queue"""
-                loop.call_soon_threadsafe(
-                    progress_queue.put_nowait,
-                    {'message': message, 'percent': progress_pct}
-                )
+                try:
+                    loop.call_soon_threadsafe(
+                        progress_queue.put_nowait,
+                        {'message': message, 'percent': progress_pct}
+                    )
+                except Exception as e:
+                    logger.error(f"Error in progress callback: {e}")
             
             # Run backtest in executor
             with concurrent.futures.ThreadPoolExecutor() as executor:
@@ -228,8 +225,8 @@ async def run_comprehensive_backtest(params: ComprehensiveBacktestParams):
     try:
         logger.info(f"🚀 Starting comprehensive backtest: {params.screener_model} + {params.day_model}")
         
-        # Create backtester - FIXED: Using OptimizedBacktester
-        backtester = OptimizedBacktester(
+        # Create backtester using the imported class (works with either name)
+        backtester = Backtester(
             api_key=settings.alpaca_key,
             api_secret=settings.alpaca_secret,
             initial_capital=params.initial_capital
