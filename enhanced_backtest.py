@@ -1,6 +1,8 @@
 """
 Enhanced Backtest Page with Real-Time SSE Progress Tracking
 Complete HTML page with Server-Sent Events for live updates
+
+UPDATED: Added daily allocation percentage and settlement tracking controls
 """
 
 ENHANCED_BACKTEST_HTML = """
@@ -98,6 +100,13 @@ ENHANCED_BACKTEST_HTML = """
             border-color: #667eea;
         }
         
+        small {
+            display: block;
+            margin-top: 4px;
+            color: #666;
+            font-size: 12px;
+        }
+        
         .grid-2 {
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -126,6 +135,34 @@ ENHANCED_BACKTEST_HTML = """
             opacity: 0.6;
             cursor: not-allowed;
             transform: none;
+        }
+        
+        /* Allocation Preview Box */
+        .allocation-preview {
+            background: linear-gradient(135deg, #f0f7ff 0%, #e6f2ff 100%);
+            padding: 20px;
+            border-radius: 12px;
+            border: 2px solid #667eea;
+            margin-bottom: 20px;
+        }
+        
+        .allocation-preview h3 {
+            color: #667eea;
+            font-size: 18px;
+            margin: 0 0 12px 0;
+        }
+        
+        .allocation-preview p {
+            margin: 8px 0;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+        
+        .allocation-preview .highlight {
+            font-size: 20px;
+            font-weight: 700;
+            color: #667eea;
+            margin-top: 12px;
         }
         
         /* Progress Section */
@@ -210,11 +247,6 @@ ENHANCED_BACKTEST_HTML = """
             font-weight: 600;
         }
         
-        .status-log .warning {
-            color: #ffc107;
-            font-weight: 600;
-        }
-        
         /* Results Section */
         .results-section {
             display: none;
@@ -262,6 +294,14 @@ ENHANCED_BACKTEST_HTML = """
         
         .publish-button {
             background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+            color: white;
+            border: none;
+            padding: 15px 40px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
             margin-top: 20px;
         }
         
@@ -322,8 +362,36 @@ ENHANCED_BACKTEST_HTML = """
                 
                 <div class="form-group">
                     <label for="initialCapital">Initial Capital ($)</label>
-                    <input type="number" id="initialCapital" value="10000" min="1000" step="1000">
+                    <input type="number" id="initialCapital" value="10000" min="100" step="100">
                 </div>
+            </div>
+            
+            <!-- NEW: Daily Allocation Controls -->
+            <div class="grid-2">
+                <div class="form-group">
+                    <label for="dailyAllocation">Daily Allocation %</label>
+                    <input type="number" id="dailyAllocation" value="10" min="1" max="100" step="1">
+                    <small>Percentage of buying power to use per day</small>
+                </div>
+                
+                <div class="form-group">
+                    <label for="settlementDays">Settlement Period (days)</label>
+                    <input type="number" id="settlementDays" value="2" min="0" max="5" step="1">
+                    <small>T+2 settlement (0 = instant for testing)</small>
+                </div>
+            </div>
+            
+            <!-- NEW: Allocation Preview -->
+            <div class="allocation-preview">
+                <h3>📊 Allocation Preview</h3>
+                <p>
+                    With <strong>$<span id="previewCapital">10,000</span></strong> 
+                    and <strong><span id="previewAllocation">10</span>%</strong> daily allocation,
+                    split among <strong><span id="previewTopN">3</span></strong> stocks:
+                </p>
+                <p class="highlight">
+                    Per Stock: $<span id="previewPerStock">333.33</span>
+                </p>
             </div>
             
             <div class="form-group">
@@ -373,9 +441,6 @@ ENHANCED_BACKTEST_HTML = """
                     <div class="metric-label">Win Rate</div>
                     <div class="metric-value" id="winRate">0%</div>
                 </div>
-            </div>
-            
-            <div class="metrics-grid">
                 <div class="metric-card">
                     <div class="metric-label">Total Trades</div>
                     <div class="metric-value" id="totalTrades">0</div>
@@ -390,88 +455,79 @@ ENHANCED_BACKTEST_HTML = """
                 </div>
                 <div class="metric-card">
                     <div class="metric-label">Profit Factor</div>
-                    <div class="metric-value" id="profitFactor">0.00</div>
+                    <div class="metric-value" id="profitFactor">0</div>
                 </div>
             </div>
             
-            <div class="metrics-grid">
-                <div class="metric-card">
-                    <div class="metric-label">Strategy</div>
-                    <div class="metric-value" style="font-size: 18px;" id="strategy">-</div>
-                </div>
-                <div class="metric-card">
-                    <div class="metric-label">Unique Stocks</div>
-                    <div class="metric-value" id="uniqueStocks">0</div>
-                </div>
-                <div class="metric-card">
-                    <div class="metric-label">Avg Win</div>
-                    <div class="metric-value positive" id="avgWin">$0</div>
-                </div>
-                <div class="metric-card">
-                    <div class="metric-label">Avg Loss</div>
-                    <div class="metric-value negative" id="avgLoss">$0</div>
+            <div class="grid-2">
+                <div>
+                    <h3 style="margin-bottom: 10px;">Strategy Info</h3>
+                    <p><strong>Strategy:</strong> <span id="strategy">-</span></p>
+                    <p><strong>Unique Stocks:</strong> <span id="uniqueStocks">-</span></p>
+                    <p><strong>Avg Win:</strong> <span id="avgWin">-</span></p>
+                    <p><strong>Avg Loss:</strong> <span id="avgLoss">-</span></p>
                 </div>
             </div>
             
-            <button class="button publish-button" id="publishButton">
-                ✅ Publish to Live Trading
+            <button class="publish-button" id="publishButton">
+                🚀 Publish to Live Trading
             </button>
         </div>
     </div>
     
     <script>
-        const runButton = document.getElementById('runBacktest');
-        const publishButton = document.getElementById('publishButton');
-        const progressSection = document.getElementById('progressSection');
-        const resultsSection = document.getElementById('resultsSection');
-        const progressBar = document.getElementById('progressBar');
-        const statusMessage = document.getElementById('statusMessage');
-        const statusLog = document.getElementById('statusLog');
+        let currentBacktestResults = null;
         
-        let logEntries = [];
-        let currentEventSource = null;
-        let lastBacktestConfig = null;
+        // Update allocation preview in real-time
+        function updateAllocationPreview() {
+            const capital = parseFloat(document.getElementById('initialCapital').value) || 10000;
+            const pct = parseFloat(document.getElementById('dailyAllocation').value) || 10;
+            const topN = parseInt(document.getElementById('topN').value) || 3;
+            
+            const dailyTotal = capital * (pct / 100);
+            const perStock = dailyTotal / topN;
+            
+            document.getElementById('previewCapital').textContent = capital.toLocaleString();
+            document.getElementById('previewAllocation').textContent = pct.toFixed(0);
+            document.getElementById('previewTopN').textContent = topN;
+            document.getElementById('previewPerStock').textContent = perStock.toLocaleString(undefined, {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2
+            });
+        }
         
-        function addLog(message, type = 'info') {
-            const timestamp = new Date().toLocaleTimeString();
-            const entry = `[${timestamp}] ${message}`;
-            logEntries.push({ message: entry, type });
-            
-            // Keep last 100 entries
-            if (logEntries.length > 100) {
-                logEntries.shift();
-            }
-            
-            // Update log display
-            statusLog.innerHTML = logEntries
-                .map(e => `<div class="${e.type}">${e.message}</div>`)
-                .join('');
-            statusLog.scrollTop = statusLog.scrollHeight;
+        // Attach event listeners for live preview updates
+        document.getElementById('initialCapital').addEventListener('input', updateAllocationPreview);
+        document.getElementById('dailyAllocation').addEventListener('input', updateAllocationPreview);
+        document.getElementById('topN').addEventListener('input', updateAllocationPreview);
+        
+        // Initial calculation
+        updateAllocationPreview();
+        
+        // Helper Functions
+        function addLog(message, className = 'info') {
+            const logDiv = document.getElementById('statusLog');
+            const entry = document.createElement('div');
+            entry.className = className;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logDiv.appendChild(entry);
+            logDiv.scrollTop = logDiv.scrollHeight;
         }
         
         function updateProgress(percent, message) {
+            const progressBar = document.getElementById('progressBar');
             progressBar.style.width = `${percent}%`;
             progressBar.textContent = `${percent}%`;
-            statusMessage.textContent = message;
-            addLog(message, 'info');
+            document.getElementById('statusMessage').textContent = message;
         }
         
-        function showResults(data) {
-            // Hide progress, show results
-            progressSection.classList.remove('active');
-            resultsSection.classList.add('active');
-            resultsSection.scrollIntoView({ behavior: 'smooth' });
+        function displayResults(data) {
+            document.getElementById('initialCapitalResult').textContent = `$${data.initial_capital.toLocaleString()}`;
+            document.getElementById('finalValue').textContent = `$${data.final_value.toLocaleString()}`;
             
-            // Update metrics
-            document.getElementById('initialCapitalResult').textContent = 
-                `$${data.initial_capital.toLocaleString()}`;
-            document.getElementById('finalValue').textContent = 
-                `$${data.final_value.toLocaleString()}`;
-            
-            const returnValue = document.getElementById('totalReturn');
-            returnValue.textContent = `${data.total_return_pct.toFixed(2)}%`;
-            returnValue.className = 'metric-value ' + 
-                (data.total_return_pct >= 0 ? 'positive' : 'negative');
+            const returnElement = document.getElementById('totalReturn');
+            returnElement.textContent = `${data.total_return_pct > 0 ? '+' : ''}${data.total_return_pct.toFixed(2)}%`;
+            returnElement.className = 'metric-value ' + (data.total_return_pct >= 0 ? 'positive' : 'negative');
             
             document.getElementById('winRate').textContent = `${data.win_rate.toFixed(1)}%`;
             document.getElementById('totalTrades').textContent = data.total_trades;
@@ -486,171 +542,131 @@ ENHANCED_BACKTEST_HTML = """
             addLog('✅ Backtest complete!', 'success');
         }
         
-        // Main backtest execution with SSE
-        runButton.addEventListener('click', async () => {
-            // Disable button
-            runButton.disabled = true;
-            runButton.textContent = 'Running...';
+        // Run Backtest Button Handler
+        document.getElementById('runBacktest').addEventListener('click', async () => {
+            const screenerModel = document.getElementById('screenerModel').value;
+            const dayModel = document.getElementById('dayModel').value;
+            const topN = parseInt(document.getElementById('topN').value);
+            const minScore = parseFloat(document.getElementById('minScore').value);
+            const days = parseInt(document.getElementById('days').value);
+            const initialCapital = parseFloat(document.getElementById('initialCapital').value);
+            const forceExecution = document.getElementById('forceExecution').checked;
             
-            // Reset and show progress
-            logEntries = [];
-            progressSection.classList.add('active');
-            resultsSection.classList.remove('active');
-            updateProgress(0, 'Connecting to backtest stream...');
+            // NEW: Get allocation parameters
+            const dailyAllocation = parseFloat(document.getElementById('dailyAllocation').value) / 100;
+            const settlementDays = parseInt(document.getElementById('settlementDays').value);
             
-            // Gather parameters
-            const params = {
-                screener_model: document.getElementById('screenerModel').value,
-                screener_params: {},
-                day_model: document.getElementById('dayModel').value,
-                day_model_params: {},
-                top_n_stocks: parseInt(document.getElementById('topN').value),
-                min_score: parseFloat(document.getElementById('minScore').value),
-                force_execution: document.getElementById('forceExecution').checked,
-                days: parseInt(document.getElementById('days').value),
-                initial_capital: parseFloat(document.getElementById('initialCapital').value)
-            };
+            // Reset UI
+            document.getElementById('statusLog').innerHTML = '';
+            document.getElementById('progressSection').classList.add('active');
+            document.getElementById('resultsSection').classList.remove('active');
+            document.getElementById('runBacktest').disabled = true;
             
-            // Store config for publishing later
-            lastBacktestConfig = params;
+            updateProgress(0, 'Initializing...');
+            addLog('Starting backtest...', 'info');
+            
+            // Build URL with NEW parameters
+            const url = `/api/comprehensive-backtest-stream?` +
+                `screener_model=${screenerModel}` +
+                `&day_model=${dayModel}` +
+                `&top_n_stocks=${topN}` +
+                `&min_score=${minScore}` +
+                `&days=${days}` +
+                `&initial_capital=${initialCapital}` +
+                `&force_execution=${forceExecution}` +
+                `&daily_allocation=${dailyAllocation}` +
+                `&settlement_days=${settlementDays}`;
             
             try {
-                addLog('Establishing SSE connection...', 'info');
+                const eventSource = new EventSource(url);
                 
-                // Build query string
-                const queryParams = new URLSearchParams({
-                    screener_model: params.screener_model,
-                    day_model: params.day_model,
-                    top_n_stocks: params.top_n_stocks,
-                    min_score: params.min_score,
-                    days: params.days,
-                    initial_capital: params.initial_capital,
-                    force_execution: params.force_execution
-                });
-                
-                // Create EventSource for Server-Sent Events
-                currentEventSource = new EventSource(`/api/comprehensive-backtest-stream?${queryParams}`);
-                
-                currentEventSource.onmessage = (event) => {
+                eventSource.addEventListener('message', (event) => {
                     try {
                         const data = JSON.parse(event.data);
                         
                         if (data.type === 'progress') {
-                            // Update progress bar and main message
                             updateProgress(data.percent, data.message);
-                            
-                            // Add detailed info to log
+                            addLog(data.message, 'info');
                             if (data.detail) {
-                                addLog(data.detail, 'detail');
+                                addLog(`  → ${data.detail}`, 'detail');
                             }
-                            
                         } else if (data.type === 'complete') {
-                            // Backtest finished successfully
                             updateProgress(100, 'Backtest complete!');
-                            addLog('✅ Backtest completed successfully', 'success');
-                            
-                            // Close connection
-                            currentEventSource.close();
-                            currentEventSource = null;
-                            
-                            // Show results
-                            if (data.results) {
-                                showResults(data.results);
-                            }
-                            
-                            // Re-enable button
-                            runButton.disabled = false;
-                            runButton.textContent = 'Run Backtest';
-                            
+                            displayResults(data.results);
+                            currentBacktestResults = data.results;
+                            document.getElementById('resultsSection').classList.add('active');
+                            document.getElementById('runBacktest').disabled = false;
+                            eventSource.close();
                         } else if (data.type === 'error') {
-                            // Error occurred
                             addLog(`❌ Error: ${data.message}`, 'error');
-                            statusMessage.textContent = `Error: ${data.message}`;
-                            statusMessage.style.background = '#fee2e2';
-                            statusMessage.style.borderColor = '#dc3545';
-                            
-                            // Close connection
-                            if (currentEventSource) {
-                                currentEventSource.close();
-                                currentEventSource = null;
-                            }
-                            
-                            // Re-enable button
-                            runButton.disabled = false;
-                            runButton.textContent = 'Run Backtest';
-                            
                             alert(`Backtest failed: ${data.message}`);
+                            document.getElementById('runBacktest').disabled = false;
+                            eventSource.close();
                         }
-                        
-                    } catch (parseError) {
-                        console.error('Error parsing SSE data:', parseError);
-                        addLog(`Parse error: ${parseError.message}`, 'error');
+                    } catch (e) {
+                        console.error('Failed to parse SSE data:', e);
                     }
-                };
+                });
                 
-                currentEventSource.onerror = (error) => {
-                    console.error('SSE connection error:', error);
-                    addLog('⚠️ Connection error. Reconnecting...', 'warning');
-                    
-                    // SSE will auto-reconnect, but if it fails completely, clean up
-                    setTimeout(() => {
-                        if (currentEventSource && currentEventSource.readyState === EventSource.CLOSED) {
-                            addLog('❌ Connection failed. Please try again.', 'error');
-                            runButton.disabled = false;
-                            runButton.textContent = 'Run Backtest';
-                            currentEventSource = null;
-                        }
-                    }, 5000);
-                };
+                eventSource.addEventListener('error', (event) => {
+                    console.error('SSE error:', event);
+                    addLog('❌ Connection error', 'error');
+                    document.getElementById('runBacktest').disabled = false;
+                    eventSource.close();
+                });
                 
             } catch (error) {
                 console.error('Error starting backtest:', error);
-                addLog(`Error: ${error.message}`, 'error');
-                statusMessage.textContent = `Error: ${error.message}`;
-                statusMessage.style.background = '#fee2e2';
-                statusMessage.style.borderColor = '#dc3545';
-                alert(`Backtest failed: ${error.message}`);
-                
-                runButton.disabled = false;
-                runButton.textContent = 'Run Backtest';
+                addLog(`❌ Error: ${error.message}`, 'error');
+                document.getElementById('runBacktest').disabled = false;
             }
         });
         
-        // Publish to live trading
-        publishButton.addEventListener('click', async () => {
-            if (!confirm('Publish this backtest configuration to live trading?')) {
+        // Publish to Live Trading
+        document.getElementById('publishButton').addEventListener('click', async () => {
+            if (!currentBacktestResults) {
+                alert('No backtest results to publish');
                 return;
             }
             
-            publishButton.disabled = true;
-            publishButton.textContent = 'Publishing...';
+            if (!confirm('Publish this configuration to live trading?')) {
+                return;
+            }
             
             try {
+                const screenerModel = document.getElementById('screenerModel').value;
+                const dayModel = document.getElementById('dayModel').value;
+                const topN = parseInt(document.getElementById('topN').value);
+                const minScore = parseFloat(document.getElementById('minScore').value);
+                const forceExecution = document.getElementById('forceExecution').checked;
+                
                 const response = await fetch('/api/publish-backtest', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(lastBacktestConfig)
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        screener_model: screenerModel,
+                        screener_params: {},
+                        day_model: dayModel,
+                        day_model_params: {},
+                        top_n_stocks: topN,
+                        min_score: minScore,
+                        force_execution: forceExecution
+                    })
                 });
                 
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}`);
+                const result = await response.json();
+                
+                if (result.status === 'success') {
+                    alert('✅ Configuration published to live trading!');
+                } else {
+                    alert('❌ Failed to publish: ' + result.message);
                 }
                 
-                const data = await response.json();
-                alert('✅ Configuration published to live trading!');
-                
             } catch (error) {
-                alert(`Failed to publish: ${error.message}`);
-            } finally {
-                publishButton.disabled = false;
-                publishButton.textContent = '✅ Publish to Live Trading';
-            }
-        });
-        
-        // Cleanup on page unload
-        window.addEventListener('beforeunload', () => {
-            if (currentEventSource) {
-                currentEventSource.close();
+                console.error('Publish error:', error);
+                alert('❌ Failed to publish: ' + error.message);
             }
         });
     </script>

@@ -526,7 +526,8 @@ class OptimizedBacktester:
         
         total_wins = sell_trades[sell_trades['pnl'] > 0]['pnl'].sum() if winning_trades > 0 else 0
         total_losses = abs(sell_trades[sell_trades['pnl'] < 0]['pnl'].sum()) if losing_trades > 0 else 0
-        profit_factor = total_wins / total_losses if total_losses > 0 else float('inf')
+        # FIXED: Use 999 instead of Infinity for JSON compatibility
+        profit_factor = total_wins / total_losses if total_losses > 0 else 999.0
         
         unique_stocks = set(t['symbol'] for t in all_trades) if all_trades else set()
         

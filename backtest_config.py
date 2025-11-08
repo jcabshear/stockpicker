@@ -1,165 +1,328 @@
 """
-Backtest Configuration
-======================
-Centralized configuration for backtesting with daily allocation control
+Backtest API Endpoints Module
+Includes SSE streaming for real-time progress updates
+UNIVERSAL VERSION: Works with both IntegratedBacktester and OptimizedBacktester
+
+UPDATED: Added daily_allocation and settlement_days parameters
+FIXED: Properly handles trade fields that may not exist (pnl, pnl_pct)
+FIXED: Added breakeven_trades to API responses
 """
 
-from dataclasses import dataclass
-from typing import List
+import logging
+import json
+import asyncio
+import concurrent.futures
+from datetime import datetime, timedelta
+from typing import Optional, List, AsyncGenerator
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+
+from config import settings
+from stock_universe import get_full_universe
+
+# Try to import either class name
+try:
+    from integrated_backtester import IntegratedBacktester as Backtester
+except ImportError:
+    try:
+        from integrated_backtester import OptimizedBacktester as Backtester
+    except ImportError:
+        raise ImportError("Could not import backtester class. Please ensure integrated_backtester.py contains either IntegratedBacktester or OptimizedBacktester class.")
+
+# Setup logging
+logger = logging.getLogger(__name__)
+
+# Create router
+router = APIRouter(prefix="/api", tags=["backtest"])
 
 
-@dataclass
-class BacktestConfig:
-    """Configuration for enhanced backtesting"""
-    
-    # Capital Settings
-    initial_capital: float = 10000  # Starting capital
-    daily_allocation_pct: float = 0.10  # 10% of buying power per day
-    
-    # Trading Rules
-    top_n_stocks: int = 2  # Number of stocks to trade per day
-    settlement_days: int = 2  # T+2 settlement period
-    
-    # Data Feed
-    feed: str = "iex"  # Use "iex" for free tier, "sip" for paid
-    
-    # Strategy Parameters
-    short_window: int = 5
-    long_window: int = 20
-    volume_threshold: float = 1.5
-    stop_loss_pct: float = 0.02
-    
-    # Symbols to Trade
-    symbols: List[str] = None
-    
-    def __post_init__(self):
-        if self.symbols is None:
-            self.symbols = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA']
-    
-    def get_per_stock_allocation(self) -> float:
-        """Calculate how much to allocate per stock"""
-        return (self.initial_capital * self.daily_allocation_pct) / self.top_n_stocks
-    
-    def print_config(self):
-        """Print configuration summary"""
-        print(f"\n{'='*80}")
-        print("BACKTEST CONFIGURATION")
-        print(f"{'='*80}")
-        print(f"\n📊 Capital Management:")
-        print(f"   Initial Capital: ${self.initial_capital:,.2f}")
-        print(f"   Daily Allocation: {self.daily_allocation_pct*100:.1f}% = ${self.initial_capital * self.daily_allocation_pct:,.2f}")
-        print(f"   Stocks Per Day: {self.top_n_stocks}")
-        print(f"   Per Stock Allocation: ${self.get_per_stock_allocation():,.2f}")
-        print(f"   Settlement Period: T+{self.settlement_days}")
-        print(f"\n📈 Strategy Parameters:")
-        print(f"   Short SMA: {self.short_window} periods")
-        print(f"   Long SMA: {self.long_window} periods")
-        print(f"   Volume Threshold: {self.volume_threshold}x average")
-        print(f"   Stop Loss: {self.stop_loss_pct*100:.1f}%")
-        print(f"\n🎯 Trading Universe:")
-        print(f"   Symbols: {', '.join(self.symbols)}")
-        print(f"   Data Feed: {self.feed.upper()}")
-        print(f"{'='*80}\n")
+class ComprehensiveBacktestParams(BaseModel):
+    """Parameters for comprehensive backtest"""
+    screener_model: str
+    screener_params: dict
+    day_model: str
+    day_model_params: dict
+    top_n_stocks: int
+    min_score: float
+    force_execution: bool
+    days: int
+    initial_capital: float
+    stock_universe: Optional[List[str]] = None
+    daily_allocation: float = 0.10          # NEW
+    settlement_days: int = 2                # NEW
 
 
-# Preset Configurations
-# =====================
+# ============================================================================
+# SSE STREAMING ENDPOINT (Real-time Progress)
+# ============================================================================
 
-def get_conservative_config() -> BacktestConfig:
-    """Conservative configuration - lower risk"""
-    return BacktestConfig(
-        initial_capital=10000,
-        daily_allocation_pct=0.05,  # Only 5% per day
-        top_n_stocks=1,  # Only 1 stock at a time
-        settlement_days=2,
-        short_window=10,
-        long_window=30,
-        volume_threshold=2.0,  # Higher volume requirement
-        stop_loss_pct=0.015,  # Tighter stop loss (1.5%)
-        symbols=['AAPL', 'MSFT', 'JNJ', 'PG']  # More stable stocks
-    )
-
-
-def get_aggressive_config() -> BacktestConfig:
-    """Aggressive configuration - higher risk/reward"""
-    return BacktestConfig(
-        initial_capital=10000,
-        daily_allocation_pct=0.20,  # 20% per day
-        top_n_stocks=3,  # Trade 3 stocks
-        settlement_days=2,
-        short_window=3,
-        long_window=10,
-        volume_threshold=1.2,  # Lower volume requirement
-        stop_loss_pct=0.03,  # Wider stop loss (3%)
-        symbols=['TSLA', 'NVDA', 'AMD', 'PLTR', 'COIN']  # More volatile stocks
-    )
-
-
-def get_balanced_config() -> BacktestConfig:
-    """Balanced configuration - moderate risk"""
-    return BacktestConfig(
-        initial_capital=10000,
-        daily_allocation_pct=0.10,  # 10% per day
-        top_n_stocks=2,  # Trade 2 stocks
-        settlement_days=2,
-        short_window=5,
-        long_window=20,
-        volume_threshold=1.5,
-        stop_loss_pct=0.02,  # 2% stop loss
-        symbols=['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META']
-    )
-
-
-# Example: Custom Configuration
-# ==============================
-
-def get_custom_config() -> BacktestConfig:
+@router.get("/comprehensive-backtest-stream")
+async def comprehensive_backtest_stream(
+    screener_model: str = Query(...),
+    day_model: str = Query(...),
+    top_n_stocks: int = Query(...),
+    min_score: float = Query(...),
+    days: int = Query(...),
+    initial_capital: float = Query(...),
+    force_execution: bool = Query(False),
+    stock_universe: Optional[str] = Query(None),
+    daily_allocation: float = Query(0.10),      # NEW
+    settlement_days: int = Query(2)             # NEW
+):
     """
-    Create your own custom configuration here
-    
-    Example: Day Trading Setup
-    - Higher daily allocation (we're in and out same day)
-    - More stocks (diversification)
-    - Tighter parameters (faster signals)
+    Stream comprehensive backtest progress using Server-Sent Events (SSE)
+    Provides real-time updates as the backtest runs
     """
-    return BacktestConfig(
-        initial_capital=10000,
-        daily_allocation_pct=0.15,  # 15% per day
-        top_n_stocks=3,  # Trade up to 3 stocks per day
-        settlement_days=2,
-        short_window=3,  # Fast SMA
-        long_window=8,  # Medium SMA
-        volume_threshold=1.3,
-        stop_loss_pct=0.025,  # 2.5% stop
-        symbols=['SPY', 'QQQ', 'AAPL', 'MSFT', 'TSLA', 'NVDA', 'AMD'],
-        feed="iex"
+    
+    async def generate_progress() -> AsyncGenerator[str, None]:
+        """Generate SSE progress updates"""
+        try:
+            # Initial connection
+            yield f"data: {json.dumps({'type': 'progress', 'percent': 0, 'message': 'Initializing backtester...', 'detail': 'Loading configuration and models'})}\n\n"
+            await asyncio.sleep(0.1)
+            
+            logger.info(f"🚀 Starting SSE backtest: {screener_model} + {day_model}")
+            
+            # Create backtester with NEW allocation settings
+            backtester = Backtester(
+                api_key=settings.alpaca_key,
+                api_secret=settings.alpaca_secret,
+                initial_capital=initial_capital,
+                daily_allocation_pct=daily_allocation,  # NEW
+                settlement_days=settlement_days          # NEW
+            )
+            
+            # Date range
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=days)
+            
+            # Handle stock universe
+            if stock_universe:
+                universe = stock_universe.split(',')
+            else:
+                universe = get_full_universe()
+            
+            logger.info(f"📊 Backtest params: {days} days, {len(universe)} stocks, top {top_n_stocks}")
+            logger.info(f"💰 Allocation: {daily_allocation*100:.0f}% per day, T+{settlement_days} settlement")
+            
+            # Progress queue for async updates
+            progress_queue = asyncio.Queue()
+            
+            # Get current event loop
+            loop = asyncio.get_running_loop()
+            
+            # Sync callback that puts updates in the queue
+            def sync_progress_callback(message: str, progress_pct: int, detail: str = ""):
+                """Synchronous callback that queues updates"""
+                try:
+                    loop.call_soon_threadsafe(
+                        progress_queue.put_nowait,
+                        {'message': message, 'percent': progress_pct, 'detail': detail}
+                    )
+                except Exception as e:
+                    logger.error(f"Error in progress callback: {e}")
+            
+            # Run backtest in executor
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                backtest_future = loop.run_in_executor(
+                    executor,
+                    backtester.run,
+                    screener_model,
+                    {},  # screener_params
+                    day_model,
+                    {},  # day_model_params
+                    start_date,
+                    end_date,
+                    universe,
+                    top_n_stocks,
+                    min_score,
+                    force_execution,
+                    sync_progress_callback
+                )
+                
+                # Stream progress updates
+                while not backtest_future.done():
+                    try:
+                        update = await asyncio.wait_for(progress_queue.get(), timeout=0.1)
+                        yield f"data: {json.dumps({'type': 'progress', 'percent': update['percent'], 'message': update['message'], 'detail': update.get('detail', '')})}\n\n"
+                    except asyncio.TimeoutError:
+                        continue
+                
+                # Drain remaining queue
+                while not progress_queue.empty():
+                    try:
+                        update = progress_queue.get_nowait()
+                        yield f"data: {json.dumps({'type': 'progress', 'percent': update['percent'], 'message': update['message'], 'detail': update.get('detail', '')})}\n\n"
+                    except:
+                        break
+                
+                # Get final results
+                results = backtest_future.result()
+            
+            # Format trades for JSON
+            trades_list = []
+            if 'trades' in results:
+                for trade in results['trades']:
+                    trades_list.append({
+                        'symbol': trade['symbol'],
+                        'action': trade['action'],
+                        'shares': trade['shares'],
+                        'price': trade['price'],
+                        'timestamp': trade['timestamp'].isoformat() if hasattr(trade['timestamp'], 'isoformat') else str(trade['timestamp']),
+                        'reason': trade.get('reason', ''),
+                        'pnl': trade.get('pnl', 0),
+                        'pnl_pct': trade.get('pnl_pct', 0) * 100
+                    })
+            
+            # Prepare final results
+            final_results = {
+                'status': 'success',
+                'strategy': results['strategy'],
+                'initial_capital': results['initial_capital'],
+                'final_value': results['final_value'],
+                'total_return_pct': results['total_return_pct'],
+                'total_trades': results['total_trades'],
+                'winning_trades': results['winning_trades'],
+                'losing_trades': results['losing_trades'],
+                'breakeven_trades': results.get('breakeven_trades', 0),
+                'win_rate': results['win_rate'] * 100,
+                'avg_win': results['avg_win'],
+                'avg_loss': results['avg_loss'],
+                'profit_factor': results['profit_factor'],
+                'trades': trades_list,
+                'unique_stocks_traded': results['unique_stocks_traded'],
+                'screening_sessions': results['screening_sessions'],
+                # NEW: Allocation metrics
+                'daily_allocation_pct': results.get('daily_allocation_pct', daily_allocation),
+                'settlement_days': results.get('settlement_days', settlement_days)
+            }
+            
+            # Send completion event
+            yield f"data: {json.dumps({'type': 'complete', 'percent': 100, 'message': 'Backtest complete!', 'results': final_results})}\n\n"
+            
+            logger.info(f"✅ SSE Backtest complete: {results['total_return_pct']:.2f}% return")
+            
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"❌ SSE Backtest failed: {error_msg}")
+            import traceback
+            traceback.print_exc()
+            yield f"data: {json.dumps({'type': 'error', 'message': error_msg})}\n\n"
+    
+    return StreamingResponse(
+        generate_progress(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+            "Access-Control-Allow-Origin": "*"
+        }
     )
 
 
-if __name__ == "__main__":
-    # Show all configurations
-    print("\n" + "="*80)
-    print("AVAILABLE CONFIGURATIONS")
-    print("="*80)
-    
-    configs = {
-        'Conservative': get_conservative_config(),
-        'Balanced': get_balanced_config(),
-        'Aggressive': get_aggressive_config(),
-        'Custom': get_custom_config()
-    }
-    
-    for name, config in configs.items():
-        print(f"\n{name.upper()}")
-        print(f"{'-'*80}")
-        print(f"Daily Allocation: {config.daily_allocation_pct*100:.1f}%")
-        print(f"Per Stock: ${config.get_per_stock_allocation():,.2f}")
-        print(f"Max Stocks/Day: {config.top_n_stocks}")
-        print(f"Risk Level: ", end="")
+# ============================================================================
+# LEGACY POST ENDPOINT (Kept for backward compatibility)
+# ============================================================================
+
+@router.post("/comprehensive-backtest")
+async def run_comprehensive_backtest(params: ComprehensiveBacktestParams):
+    """
+    Run comprehensive backtest with daily screening + intraday trading
+    (Legacy endpoint - returns results all at once)
+    """
+    try:
+        logger.info(f"🚀 Starting comprehensive backtest: {params.screener_model} + {params.day_model}")
         
-        if config.daily_allocation_pct <= 0.05:
-            print("🟢 LOW")
-        elif config.daily_allocation_pct <= 0.10:
-            print("🟡 MEDIUM")
+        # Create backtester with NEW allocation settings
+        backtester = Backtester(
+            api_key=settings.alpaca_key,
+            api_secret=settings.alpaca_secret,
+            initial_capital=params.initial_capital,
+            daily_allocation_pct=params.daily_allocation,  # NEW
+            settlement_days=params.settlement_days          # NEW
+        )
+        
+        # Date range
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=params.days)
+        
+        # Handle manual selection
+        if params.screener_model == 'manual':
+            if not params.stock_universe:
+                raise HTTPException(400, "Manual selection requires stock_universe parameter")
+            universe = params.stock_universe
         else:
-            print("🔴 HIGH")
+            universe = params.stock_universe if params.stock_universe else get_full_universe()
+        
+        logger.info(f"📊 Backtest params: {params.days} days, {len(universe)} stocks, top {params.top_n_stocks}")
+        logger.info(f"💰 Allocation: {params.daily_allocation*100:.0f}% per day, T+{params.settlement_days} settlement")
+        
+        # Progress callback that logs to console
+        def log_progress(message: str, progress_pct: int, detail: str = ""):
+            """Log progress updates - accepts 3 parameters"""
+            if detail:
+                logger.info(f"[{progress_pct}%] {message} - {detail}")
+            else:
+                logger.info(f"[{progress_pct}%] {message}")
+        
+        # Run backtest with progress logging
+        results = backtester.run(
+            screener_model=params.screener_model,
+            screener_params=params.screener_params,
+            day_model=params.day_model,
+            day_model_params=params.day_model_params,
+            start_date=start_date,
+            end_date=end_date,
+            stock_universe=universe,
+            top_n=params.top_n_stocks,
+            min_score=params.min_score,
+            force_execution=params.force_execution,
+            progress_callback=log_progress
+        )
+        
+        # Format trades for JSON
+        trades_list = []
+        if 'trades' in results:
+            for trade in results['trades']:
+                trades_list.append({
+                    'symbol': trade['symbol'],
+                    'action': trade['action'],
+                    'shares': trade['shares'],
+                    'price': trade['price'],
+                    'timestamp': trade['timestamp'].isoformat() if hasattr(trade['timestamp'], 'isoformat') else str(trade['timestamp']),
+                    'reason': trade.get('reason', ''),
+                    'pnl': trade.get('pnl', 0),
+                    'pnl_pct': trade.get('pnl_pct', 0) * 100
+                })
+        
+        logger.info(f"✅ Backtest complete: {results['total_return_pct']:.2f}% return, {results['total_trades']} trades")
+        
+        return {
+            'status': 'success',
+            'strategy': results['strategy'],
+            'initial_capital': results['initial_capital'],
+            'final_value': results['final_value'],
+            'total_return_pct': results['total_return_pct'],
+            'total_trades': results['total_trades'],
+            'winning_trades': results['winning_trades'],
+            'losing_trades': results['losing_trades'],
+            'breakeven_trades': results.get('breakeven_trades', 0),
+            'win_rate': results['win_rate'] * 100,
+            'avg_win': results['avg_win'],
+            'avg_loss': results['avg_loss'],
+            'profit_factor': results['profit_factor'],
+            'trades': trades_list[:100],  # Limit to first 100 trades
+            'unique_stocks_traded': results['unique_stocks_traded'],
+            'screening_sessions': results['screening_sessions'],
+            # NEW: Allocation metrics
+            'daily_allocation_pct': results.get('daily_allocation_pct', params.daily_allocation),
+            'settlement_days': results.get('settlement_days', params.settlement_days)
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Backtest failed: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, f"Backtest failed: {str(e)}")
