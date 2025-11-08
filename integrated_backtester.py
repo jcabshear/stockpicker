@@ -1,22 +1,21 @@
 """
-Optimized Integrated Backtester with Daily Allocation Control
-=============================================================
+Optimized Integrated Backtester with Detailed Progress Updates AND Daily Allocation
+====================================================================================
 
-NEW FEATURES (Added):
+FEATURES:
+- Detailed progress messages showing stocks screened, selected, and traded
 - Daily allocation percentage control
-- Equal distribution among stocks
-- Accurate buying power tracking with T+2 settlement
-- Per-stock position sizing
-
-EXISTING FEATURES (Preserved):
-- Batch API requests for all stock data
-- Detailed progress messages
-- Screening model integration
-- Day trading model integration
+- Settlement time tracking (T+2)
+- Accurate buying power management
+- Batch API requests for performance
 - Force execution logic
-- Real-time progress callbacks
+- Timezone-aware datetime handling
 
-UPDATED: November 2024 - Added daily allocation and settlement tracking
+FIXED:
+- Infinity JSON error (uses 999.0 instead)
+- Trade counting (only counts closed positions)
+- Added breakeven trades
+- Added daily allocation and settlement tracking
 """
 
 import pandas as pd
@@ -39,16 +38,14 @@ class SettledFunds:
 
 
 class OptimizedBacktester:
-    """
-    Optimized backtester with batch data fetching and daily allocation control
-    """
+    """Optimized backtester with batch data fetching and daily allocation control"""
     
     def __init__(
         self, 
         api_key: str, 
         api_secret: str, 
         initial_capital: float = 10000,
-        daily_allocation_pct: float = 0.10,  # NEW: Daily allocation percentage
+        daily_allocation_pct: float = 0.10,  # NEW: 10% per day
         settlement_days: int = 2              # NEW: T+2 settlement
     ):
         self.api_key = api_key
@@ -63,7 +60,7 @@ class OptimizedBacktester:
         self.settlement_days = settlement_days
         self.settled_cash = initial_capital
         self.unsettled_funds: List[SettledFunds] = []
-        self.daily_capital_records = []  # Track daily capital flow
+        self.daily_capital_records = []
     
     def get_available_buying_power(self, current_date: datetime) -> float:
         """
@@ -97,33 +94,6 @@ class OptimizedBacktester:
             'num_stocks': num_stocks,
             'per_stock_allocation': per_stock_allocation
         }
-    
-    def record_daily_capital(
-        self, 
-        date: datetime, 
-        positions: dict, 
-        trades_today: int
-    ):
-        """
-        NEW: Record daily capital state for analysis
-        """
-        position_value = sum(
-            p.get('shares', 0) * p.get('current_price', 0) 
-            for p in positions.values()
-        )
-        
-        unsettled_total = sum(f.amount for f in self.unsettled_funds)
-        total_equity = self.settled_cash + unsettled_total + position_value
-        
-        self.daily_capital_records.append({
-            'date': date,
-            'settled_cash': self.settled_cash,
-            'unsettled_cash': unsettled_total,
-            'position_value': position_value,
-            'total_equity': total_equity,
-            'trades': trades_today,
-            'open_positions': len(positions)
-        })
     
     async def _call_progress_callback(self, callback: Optional[Callable], *args, **kwargs):
         """Helper to call progress callback whether it's sync or async"""
@@ -241,12 +211,12 @@ class OptimizedBacktester:
         minute_bars: pd.DataFrame,
         stock_info: dict,
         day_trader,
-        per_stock_allocation: float,  # UPDATED: Use per-stock allocation
+        per_stock_allocation: float,  # NEW: Use per-stock allocation
         force_execution: bool
     ) -> List[dict]:
         """
         Simulate intraday trading for one stock
-        UPDATED: Uses per_stock_allocation instead of total cash
+        UPDATED: Uses per_stock_allocation and settlement tracking
         """
         trades = []
         position = None
@@ -272,13 +242,13 @@ class OptimizedBacktester:
                         confidence_threshold = 0 if force_execution else 0.6
                         
                         if signal.confidence >= confidence_threshold:
-                            # UPDATED: Use per_stock_allocation
+                            # NEW: Use per_stock_allocation
                             shares = per_stock_allocation / signal.price
                             cost = shares * signal.price
                             
-                            # Check if we have enough settled cash
+                            # NEW: Check settled cash
                             if cost <= self.settled_cash:
-                                self.settled_cash -= cost  # Deduct from settled cash
+                                self.settled_cash -= cost
                                 
                                 position = {
                                     'shares': shares,
@@ -330,7 +300,7 @@ class OptimizedBacktester:
                         pnl = proceeds - cost
                         pnl_pct = (current_price - position['entry_price']) / position['entry_price']
                         
-                        # UPDATED: Schedule settlement (T+2)
+                        # NEW: Schedule settlement (T+2)
                         settlement_date = timestamp + timedelta(days=self.settlement_days)
                         self.unsettled_funds.append(SettledFunds(proceeds, settlement_date))
                         
@@ -361,7 +331,7 @@ class OptimizedBacktester:
             pnl = proceeds - cost
             pnl_pct = (final_price - position['entry_price']) / position['entry_price']
             
-            # UPDATED: Schedule settlement
+            # NEW: Schedule settlement
             settlement_date = final_timestamp + timedelta(days=self.settlement_days)
             self.unsettled_funds.append(SettledFunds(proceeds, settlement_date))
             
@@ -393,8 +363,7 @@ class OptimizedBacktester:
         progress_callback=None
     ) -> dict:
         """
-        Run backtest with detailed progress updates
-        UPDATED: Now includes daily allocation and settlement tracking
+        Run backtest with detailed progress updates AND allocation tracking
         """
         from models.screeners import get_screener
         from models.daytrade import get_day_trade_model
@@ -427,7 +396,7 @@ class OptimizedBacktester:
         completed_days = 0
         total_days = (end_date - start_date).days
         
-        # UPDATED: Reset capital tracking
+        # NEW: Reset capital tracking
         self.settled_cash = self.initial_capital
         self.unsettled_funds = []
         self.daily_capital_records = []
@@ -445,56 +414,140 @@ class OptimizedBacktester:
                 f"Day {completed_days}/{total_days}"
             )
             
-            # UPDATED: Get available buying power (settles funds if ready)
+            # NEW: Get available buying power (settles funds if ready)
             buying_power = self.get_available_buying_power(current_date)
             
             # Screen stocks
+            await self._call_progress_callback(
+                progress_callback,
+                f"Screening {len(stock_universe)} stocks...",
+                progress_pct,
+                f"Looking for stocks with score >= {min_score}"
+            )
+            
             screened = self._screen_with_bulk_data(
                 bulk_daily_data,
                 screener,
                 min_score
             )
             
+            await self._call_progress_callback(
+                progress_callback,
+                f"Screening complete",
+                progress_pct,
+                f"Found {len(screened)} stocks qualifying (score >= {min_score})"
+            )
+            
+            if not screened:
+                await self._call_progress_callback(
+                    progress_callback,
+                    f"No stocks qualified",
+                    progress_pct,
+                    f"Skipping {day_str} - no stocks met minimum score"
+                )
+                current_date += timedelta(days=1)
+                continue
+            
             # Select top N
             selected = screened[:top_n]
+            selected_symbols = [s.symbol for s in selected]
             
-            # UPDATED: Allocate capital for the day
+            # NEW: Allocate capital for the day
             allocation = self.allocate_daily_capital(buying_power, len(selected))
             per_stock_allocation = allocation['per_stock_allocation']
             
-            # Fetch minute data for selected stocks
-            if selected:
-                symbols = [s.symbol for s in selected]
-                day_start = current_date.replace(hour=9, minute=30)
-                day_end = current_date.replace(hour=16, minute=0)
-                
-                minute_data = self.fetch_bulk_minute_data(symbols, day_start, day_end)
-                
-                # Trade each selected stock
-                day_trades = []
-                for stock_info in selected:
-                    symbol = stock_info.symbol
-                    symbol_minute_data = minute_data.get(symbol, pd.DataFrame())
-                    
-                    if symbol_minute_data.empty:
-                        continue
-                    
-                    # UPDATED: Pass per_stock_allocation
-                    trades_for_symbol = self._simulate_intraday_trading(
-                        symbol,
-                        symbol_minute_data,
-                        stock_info.__dict__,
-                        day_trader,
-                        per_stock_allocation,  # Use allocated amount per stock
-                        force_execution
-                    )
-                    
-                    day_trades.extend(trades_for_symbol)
-                
-                all_trades.extend(day_trades)
+            await self._call_progress_callback(
+                progress_callback,
+                f"Selected top {len(selected)} stocks",
+                progress_pct,
+                f"Trading: {', '.join(selected_symbols)} (${per_stock_allocation:,.2f} each)"
+            )
             
-            # UPDATED: Record daily capital state
-            self.record_daily_capital(current_date, positions, len(day_trades) if selected else 0)
+            # Fetch minute data for selected stocks
+            symbols = [s.symbol for s in selected]
+            day_start = current_date.replace(hour=9, minute=30)
+            day_end = current_date.replace(hour=16, minute=0)
+            
+            await self._call_progress_callback(
+                progress_callback,
+                f"Fetching minute data...",
+                progress_pct,
+                f"Downloading intraday bars for {len(symbols)} stocks"
+            )
+            
+            minute_data = self.fetch_bulk_minute_data(symbols, day_start, day_end)
+            
+            # Trade each selected stock
+            day_trades = []
+            for idx, stock_info in enumerate(selected, 1):
+                symbol = stock_info.symbol
+                symbol_minute_data = minute_data.get(symbol, pd.DataFrame())
+                
+                if symbol_minute_data.empty:
+                    await self._call_progress_callback(
+                        progress_callback,
+                        f"{symbol}: No minute data",
+                        progress_pct,
+                        f"Skipping {symbol} - no intraday data available"
+                    )
+                    continue
+                
+                await self._call_progress_callback(
+                    progress_callback,
+                    f"Trading {symbol} ({idx}/{len(selected)})",
+                    progress_pct,
+                    f"Running {day_model} model on {len(symbol_minute_data)} minute bars"
+                )
+                
+                # NEW: Pass per_stock_allocation
+                trades_for_symbol = self._simulate_intraday_trading(
+                    symbol,
+                    symbol_minute_data,
+                    stock_info.__dict__,
+                    day_trader,
+                    per_stock_allocation,  # Use allocated amount per stock
+                    force_execution
+                )
+                
+                # Log trades
+                for trade in trades_for_symbol:
+                    if trade['action'] == 'buy':
+                        await self._call_progress_callback(
+                            progress_callback,
+                            f"✅ BUY {symbol}",
+                            progress_pct,
+                            f"{trade['shares']:.2f} shares @ ${trade['price']:.2f} = ${trade['shares'] * trade['price']:.2f}"
+                        )
+                    elif trade['action'] == 'sell':
+                        pnl_str = f"+${trade['pnl']:.2f}" if trade['pnl'] > 0 else f"-${abs(trade['pnl']):.2f}"
+                        await self._call_progress_callback(
+                            progress_callback,
+                            f"💰 SELL {symbol}",
+                            progress_pct,
+                            f"{trade['shares']:.2f} shares @ ${trade['price']:.2f} (P&L: {pnl_str})"
+                        )
+                
+                day_trades.extend(trades_for_symbol)
+            
+            all_trades.extend(day_trades)
+            
+            # NEW: Record daily capital state
+            position_value = sum(
+                p.get('shares', 0) * p.get('current_price', 0) 
+                for p in positions.values()
+            )
+            unsettled_total = sum(f.amount for f in self.unsettled_funds)
+            total_equity = self.settled_cash + unsettled_total + position_value
+            
+            self.daily_capital_records.append({
+                'date': current_date,
+                'settled_cash': self.settled_cash,
+                'unsettled_cash': unsettled_total,
+                'position_value': position_value,
+                'total_equity': total_equity,
+                'trades': len(day_trades),
+                'open_positions': len(positions)
+            })
             
             current_date += timedelta(days=1)
         
@@ -526,7 +579,7 @@ class OptimizedBacktester:
         
         total_wins = sell_trades[sell_trades['pnl'] > 0]['pnl'].sum() if winning_trades > 0 else 0
         total_losses = abs(sell_trades[sell_trades['pnl'] < 0]['pnl'].sum()) if losing_trades > 0 else 0
-        # FIXED: Use 999 instead of Infinity for JSON compatibility
+        # FIXED: Use 999.0 instead of Infinity for JSON compatibility
         profit_factor = total_wins / total_losses if total_losses > 0 else 999.0
         
         unique_stocks = set(t['symbol'] for t in all_trades) if all_trades else set()
@@ -570,9 +623,7 @@ class OptimizedBacktester:
         force_execution: bool = False,
         progress_callback=None
     ) -> dict:
-        """
-        Synchronous wrapper for run_with_detailed_progress
-        """
+        """Synchronous wrapper for run_with_detailed_progress"""
         import asyncio
         
         try:
