@@ -183,9 +183,10 @@ class OptimizedBacktester:
         self,
         bulk_daily_data: Dict[str, pd.DataFrame],
         screener,
-        min_score: float
+        min_score: float,
+        current_date: datetime  # NEW: Need current date for filtering
     ) -> List:
-        """Screen stocks using pre-fetched bulk data"""
+        """Screen stocks using pre-fetched bulk data, filtered by current date"""
         from models.screeners import ScreenedStock
         
         screened = []
@@ -194,7 +195,14 @@ class OptimizedBacktester:
                 continue
             
             try:
-                result = screener.screen_with_data(symbol, df)
+                # CRITICAL FIX: Filter data up to current date only
+                df_filtered = df[df.index <= current_date]
+                
+                if df_filtered.empty or len(df_filtered) < 20:
+                    continue
+                
+                # Now screen with properly filtered data
+                result = screener.screen_with_data(symbol, df_filtered)
                 
                 if result and result.score >= min_score:
                     screened.append(result)
@@ -428,7 +436,8 @@ class OptimizedBacktester:
             screened = self._screen_with_bulk_data(
                 bulk_daily_data,
                 screener,
-                min_score
+                min_score,
+                current_date  # NEW: Pass current date for filtering
             )
             
             await self._call_progress_callback(
