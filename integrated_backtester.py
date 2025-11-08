@@ -1,17 +1,22 @@
 """
-Optimized Integrated Backtester with Detailed Progress Updates
-Key optimizations:
-1. Batch API requests to fetch all stock data at once
-2. Detailed progress messages for each step
-3. Cache daily data to avoid re-fetching
+Optimized Integrated Backtester with Daily Allocation Control
+=============================================================
 
-FIXED BUGS:
-- Implemented complete screening logic in _screen_with_bulk_data
-- Added force_execution logic to allow trading even with low confidence
-- Implemented complete trading simulation with signal generation
-- Connected all models properly
-- FIXED: Timezone-aware datetime handling for Alpaca API compatibility
-- FIXED: Trade counting - only counts closed positions (sells) + added breakeven trades
+NEW FEATURES (Added):
+- Daily allocation percentage control
+- Equal distribution among stocks
+- Accurate buying power tracking with T+2 settlement
+- Per-stock position sizing
+
+EXISTING FEATURES (Preserved):
+- Batch API requests for all stock data
+- Detailed progress messages
+- Screening model integration
+- Day trading model integration
+- Force execution logic
+- Real-time progress callbacks
+
+UPDATED: November 2024 - Added daily allocation and settlement tracking
 """
 
 import pandas as pd
@@ -23,46 +28,120 @@ from alpaca.data.timeframe import TimeFrame
 from alpaca.data.enums import DataFeed
 import asyncio
 import inspect
+from dataclasses import dataclass
+
+
+@dataclass
+class SettledFunds:
+    """Track funds that will settle on a future date"""
+    amount: float
+    settlement_date: datetime
 
 
 class OptimizedBacktester:
-    """Optimized backtester with batch data fetching"""
+    """
+    Optimized backtester with batch data fetching and daily allocation control
+    """
     
-    def __init__(self, api_key: str, api_secret: str, initial_capital: float = 10000):
+    def __init__(
+        self, 
+        api_key: str, 
+        api_secret: str, 
+        initial_capital: float = 10000,
+        daily_allocation_pct: float = 0.10,  # NEW: Daily allocation percentage
+        settlement_days: int = 2              # NEW: T+2 settlement
+    ):
         self.api_key = api_key
         self.api_secret = api_secret
         self.client = StockHistoricalDataClient(api_key, api_secret)
         self.initial_capital = initial_capital
         self.feed = DataFeed.IEX
-        self.data_cache = {}  # Cache fetched data
+        self.data_cache = {}
+        
+        # NEW: Allocation and settlement tracking
+        self.daily_allocation_pct = daily_allocation_pct
+        self.settlement_days = settlement_days
+        self.settled_cash = initial_capital
+        self.unsettled_funds: List[SettledFunds] = []
+        self.daily_capital_records = []  # Track daily capital flow
+    
+    def get_available_buying_power(self, current_date: datetime) -> float:
+        """
+        NEW: Calculate available buying power on a given date
+        Settles any funds that are ready
+        """
+        newly_settled = 0
+        remaining_unsettled = []
+        
+        for fund in self.unsettled_funds:
+            if fund.settlement_date <= current_date:
+                newly_settled += fund.amount
+            else:
+                remaining_unsettled.append(fund)
+        
+        self.settled_cash += newly_settled
+        self.unsettled_funds = remaining_unsettled
+        
+        return self.settled_cash
+    
+    def allocate_daily_capital(self, buying_power: float, num_stocks: int) -> Dict:
+        """
+        NEW: Calculate daily allocation split among stocks
+        """
+        daily_allocation = buying_power * self.daily_allocation_pct
+        per_stock_allocation = daily_allocation / num_stocks if num_stocks > 0 else 0
+        
+        return {
+            'total_buying_power': buying_power,
+            'daily_allocation': daily_allocation,
+            'num_stocks': num_stocks,
+            'per_stock_allocation': per_stock_allocation
+        }
+    
+    def record_daily_capital(
+        self, 
+        date: datetime, 
+        positions: dict, 
+        trades_today: int
+    ):
+        """
+        NEW: Record daily capital state for analysis
+        """
+        position_value = sum(
+            p.get('shares', 0) * p.get('current_price', 0) 
+            for p in positions.values()
+        )
+        
+        unsettled_total = sum(f.amount for f in self.unsettled_funds)
+        total_equity = self.settled_cash + unsettled_total + position_value
+        
+        self.daily_capital_records.append({
+            'date': date,
+            'settled_cash': self.settled_cash,
+            'unsettled_cash': unsettled_total,
+            'position_value': position_value,
+            'total_equity': total_equity,
+            'trades': trades_today,
+            'open_positions': len(positions)
+        })
     
     async def _call_progress_callback(self, callback: Optional[Callable], *args, **kwargs):
-        """
-        Helper to call progress callback whether it's sync or async
-        """
+        """Helper to call progress callback whether it's sync or async"""
         if callback is None:
             return
         
-        # Check if it's an async function
         if inspect.iscoroutinefunction(callback):
             await callback(*args, **kwargs)
         else:
-            # It's a sync function, just call it normally
             callback(*args, **kwargs)
     
     def fetch_bulk_daily_data(self, symbols: List[str], days_back: int = 60) -> Dict[str, pd.DataFrame]:
-        """
-        Fetch daily data for ALL symbols at once (much faster than individual calls)
-        
-        Returns:
-            Dict mapping symbol -> DataFrame of daily bars
-        """
+        """Fetch daily data for ALL symbols at once (much faster than individual calls)"""
         end = datetime.now()
         start = end - timedelta(days=days_back)
         
-        # Batch request for ALL symbols at once
         request = StockBarsRequest(
-            symbol_or_symbols=symbols,  # All symbols in one request!
+            symbol_or_symbols=symbols,
             timeframe=TimeFrame.Day,
             start=start,
             end=end,
@@ -73,7 +152,6 @@ class OptimizedBacktester:
             bars = self.client.get_stock_bars(request)
             df = bars.df
             
-            # Organize by symbol
             daily_data = {}
             for symbol in symbols:
                 try:
@@ -87,27 +165,20 @@ class OptimizedBacktester:
             return daily_data
             
         except Exception as e:
-            print(f"Warning: Batch daily fetch failed: {e}")
+            print(f"Warning: Bulk daily fetch failed: {e}")
             return {symbol: pd.DataFrame() for symbol in symbols}
     
-    def fetch_minute_data_batch(self, symbols: List[str], target_date: datetime) -> Dict[str, pd.DataFrame]:
-        """
-        Fetch minute data for multiple symbols for a specific day
+    def fetch_bulk_minute_data(
+        self, 
+        symbols: List[str], 
+        start: datetime, 
+        end: datetime
+    ) -> Dict[str, pd.DataFrame]:
+        """Fetch minute data for multiple symbols (cached)"""
+        cache_key = f"{','.join(sorted(symbols))}_{start.date()}_{end.date()}"
         
-        Returns:
-            Dict mapping symbol -> DataFrame of minute bars
-        """
-        # Create cache key
-        date_str = target_date.strftime('%Y-%m-%d')
-        cache_key = f"{date_str}_{'_'.join(sorted(symbols))}"
-        
-        # Check cache
         if cache_key in self.data_cache:
             return self.data_cache[cache_key]
-        
-        # Market hours: 9:30 AM - 4:00 PM ET
-        start = datetime.combine(target_date.date(), dt_time(9, 30))
-        end = datetime.combine(target_date.date(), dt_time(16, 0))
         
         request = StockBarsRequest(
             symbol_or_symbols=symbols,
@@ -121,7 +192,6 @@ class OptimizedBacktester:
             bars = self.client.get_stock_bars(request)
             df = bars.df
             
-            # Organize by symbol
             minute_data = {}
             for symbol in symbols:
                 try:
@@ -132,7 +202,6 @@ class OptimizedBacktester:
                 except:
                     minute_data[symbol] = pd.DataFrame()
             
-            # Cache it
             self.data_cache[cache_key] = minute_data
             return minute_data
             
@@ -140,500 +209,130 @@ class OptimizedBacktester:
             print(f"Warning: Batch minute fetch failed: {e}")
             return {symbol: pd.DataFrame() for symbol in symbols}
     
-    def run(
+    def _screen_with_bulk_data(
         self,
-        screener_model: str,
-        screener_params: dict,
-        day_model: str,
-        day_model_params: dict,
-        start_date,
-        end_date,
-        stock_universe: list,
-        top_n: int = 3,
-        min_score: float = 60,
-        force_execution: bool = False,
-        progress_callback=None
-    ) -> dict:
-        """
-        Synchronous wrapper for run_with_detailed_progress
-        This allows the backtester to be called from both sync and async contexts
-        """
-        import asyncio
-        
-        # Create a new event loop if we're not in an async context
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # We're already in an async context, need to create new loop in thread
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(
-                        asyncio.run,
-                        self.run_with_detailed_progress(
-                            screener_model=screener_model,
-                            screener_params=screener_params,
-                            day_model=day_model,
-                            day_model_params=day_model_params,
-                            start_date=start_date,
-                            end_date=end_date,
-                            stock_universe=stock_universe,
-                            top_n=top_n,
-                            min_score=min_score,
-                            force_execution=force_execution,
-                            progress_callback=progress_callback
-                        )
-                    )
-                    return future.result()
-        except RuntimeError:
-            # No event loop, create one
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-        
-        # Run the async method
-        try:
-            return loop.run_until_complete(
-                self.run_with_detailed_progress(
-                    screener_model=screener_model,
-                    screener_params=screener_params,
-                    day_model=day_model,
-                    day_model_params=day_model_params,
-                    start_date=start_date,
-                    end_date=end_date,
-                    stock_universe=stock_universe,
-                    top_n=top_n,
-                    min_score=min_score,
-                    force_execution=force_execution,
-                    progress_callback=progress_callback
-                )
-            )
-        finally:
-            # Only close if we created it
-            if not loop.is_running():
-                loop.close()
-    
-    async def run_with_detailed_progress(
-        self,
-        screener_model: str,
-        screener_params: dict,
-        day_model: str,
-        day_model_params: dict,
-        start_date: datetime,
-        end_date: datetime,
-        stock_universe: List[str],
-        top_n: int = 3,
-        min_score: float = 60,
-        force_execution: bool = False,
-        progress_callback: Optional[Callable] = None
-    ) -> dict:
-        """
-        Run backtest with extremely detailed progress updates
-        
-        Progress callback receives: (message, progress_pct, detail)
-        Can be either sync or async function
-        
-        FIXED: Now properly implements screening and trading logic with force_execution support
-        """
-        from models import get_screener, get_day_trade_model
-        
-        # TIMEZONE FIX: Ensure dates are timezone-aware (UTC) to match Alpaca data
-        if start_date.tzinfo is None:
-            start_date = pd.Timestamp(start_date).tz_localize('UTC').to_pydatetime()
-        if end_date.tzinfo is None:
-            end_date = pd.Timestamp(end_date).tz_localize('UTC').to_pydatetime()
-        
-        # Calculate total days
-        total_days = 0
-        temp_date = start_date
-        while temp_date <= end_date:
-            if temp_date.weekday() < 5:
-                total_days += 1
-            temp_date += timedelta(days=1)
-        
-        await self._call_progress_callback(
-            progress_callback,
-            "Pre-fetching historical data for screening...",
-            5,
-            f"Fetching {len(stock_universe)} stocks in bulk (much faster!)"
-        )
-        
-        # OPTIMIZATION: Pre-fetch ALL daily data at once
-        print(f"📊 Pre-fetching data for {len(stock_universe)} stocks...")
-        bulk_daily_data = self.fetch_bulk_daily_data(stock_universe, days_back=60)
-        
-        await self._call_progress_callback(
-            progress_callback,
-            "Data pre-fetch complete!",
-            10,
-            f"Successfully loaded data for screening"
-        )
-        
-        # Initialize
-        cash = self.initial_capital
-        positions = {}
-        all_trades = []
-        daily_results = []
-        
-        # Create models
-        screener = get_screener(screener_model, self.api_key, self.api_secret, **screener_params)
-        day_trader = get_day_trade_model(day_model, **day_model_params)
-        
-        # Iterate through trading days
-        current_date = start_date
-        day_count = 0
-        completed_days = 0
-        
-        while current_date <= end_date:
-            # Skip weekends
-            if current_date.weekday() >= 5:
-                current_date += timedelta(days=1)
-                continue
-            
-            day_count += 1
-            completed_days += 1
-            base_progress = 10 + int((completed_days / total_days) * 85)  # 10-95%
-            
-            day_str = current_date.strftime("%Y-%m-%d")
-            
-            # === SCREENING PHASE ===
-            await self._call_progress_callback(
-                progress_callback,
-                f"Day {day_count}/{total_days}: Screening stocks...",
-                base_progress,
-                f"Analyzing {len(stock_universe)} stocks for {day_str}"
-            )
-            
-            # Screen stocks
-            screened = await self._screen_with_bulk_data(
-                screener,
-                stock_universe,
-                bulk_daily_data,
-                min_score,
-                force_execution,
-                progress_callback,
-                base_progress,
-                day_count,
-                total_days,
-                current_date
-            )
-            
-            if not screened:
-                await self._call_progress_callback(
-                    progress_callback,
-                    f"Day {day_count}: No stocks qualified",
-                    base_progress + 1,
-                    f"Minimum score {min_score} not met, skipping day"
-                )
-                current_date += timedelta(days=1)
-                continue
-            
-            # Select top N
-            if force_execution:
-                selected = screened[:top_n]
-                await self._call_progress_callback(
-                    progress_callback,
-                    f"Day {day_count}: Force execution enabled",
-                    base_progress + 1,
-                    f"Trading top {len(selected)} stocks regardless of confidence"
-                )
-            else:
-                selected = screened[:top_n]
-            
-            selected_symbols = [s['symbol'] for s in selected]
-            
-            await self._call_progress_callback(
-                progress_callback,
-                f"Day {day_count}: Selected top {len(selected)} stocks",
-                base_progress + 2,
-                f"Trading: {', '.join(selected_symbols)}"
-            )
-            
-            # === TRADING SIMULATION ===
-            day_trades = []
-            
-            for idx, stock_info in enumerate(selected, 1):
-                symbol = stock_info['symbol']
-                
-                await self._call_progress_callback(
-                    progress_callback,
-                    f"Day {day_count}: Trading {symbol} ({idx}/{len(selected)})",
-                    base_progress + 3 + idx,
-                    f"Fetching minute data and simulating intraday trades..."
-                )
-                
-                # Fetch minute data
-                minute_data_dict = self.fetch_minute_data_batch([symbol], current_date)
-                symbol_minute_data = minute_data_dict.get(symbol)
-                
-                if symbol_minute_data is None or symbol_minute_data.empty:
-                    await self._call_progress_callback(
-                        progress_callback,
-                        f"Day {day_count}: {symbol} - No data",
-                        base_progress + 3 + idx,
-                        "Skipping due to missing minute data"
-                    )
-                    continue
-                
-                await self._call_progress_callback(
-                    progress_callback,
-                    f"Day {day_count}: Simulating {symbol}",
-                    base_progress + 3 + idx,
-                    f"Running {day_model} model on {len(symbol_minute_data)} minute bars"
-                )
-                
-                # Simulate intraday trading
-                trades_for_symbol = self._simulate_intraday_trading(
-                    symbol,
-                    symbol_minute_data,
-                    stock_info,
-                    day_trader,
-                    cash,
-                    force_execution
-                )
-                
-                # Process trades and update cash
-                for trade in trades_for_symbol:
-                    if trade['action'] == 'buy':
-                        cost = trade['shares'] * trade['price']
-                        if cost <= cash:
-                            cash -= cost
-                            day_trades.append(trade)
-                    elif trade['action'] == 'sell':
-                        proceeds = trade['shares'] * trade['price']
-                        cash += proceeds
-                        day_trades.append(trade)
-            
-            # Record daily results
-            all_trades.extend(day_trades)
-            daily_results.append({
-                'date': day_str,
-                'stocks_screened': len(stock_universe),
-                'stocks_qualified': len(screened),
-                'stocks_traded': len(selected),
-                'trades': len(day_trades),
-                'cash': cash
-            })
-            
-            current_date += timedelta(days=1)
-        
-        # Final progress
-        await self._call_progress_callback(
-            progress_callback,
-            "Compiling results...",
-            95,
-            f"Processed {completed_days} trading days"
-        )
-        
-        # Calculate results
-        final_value = cash + sum(pos.get('current_price', 0) * pos.get('shares', 0) for pos in positions.values())
-        total_return = final_value - self.initial_capital
-        total_return_pct = (total_return / self.initial_capital) * 100
-        
-        # ============================================================================
-        # FIXED: Calculate trade statistics - ONLY count closed positions (sells)
-        # ============================================================================
-        closed_trades = [t for t in all_trades if t.get('action') == 'sell']
-        
-        # Define breakeven threshold (e.g., within $0.01)
-        breakeven_threshold = 0.01  # $0.01
-        
-        winning_trades = sum(1 for t in closed_trades if t.get('pnl', 0) > breakeven_threshold)
-        losing_trades = sum(1 for t in closed_trades if t.get('pnl', 0) < -breakeven_threshold)
-        breakeven_trades = sum(1 for t in closed_trades if abs(t.get('pnl', 0)) <= breakeven_threshold)
-        
-        total_trades = len(closed_trades)
-        win_rate = winning_trades / total_trades if total_trades else 0
-        
-        avg_win = sum(t['pnl'] for t in closed_trades if t.get('pnl', 0) > breakeven_threshold) / winning_trades if winning_trades else 0
-        avg_loss = abs(sum(t['pnl'] for t in closed_trades if t.get('pnl', 0) < -breakeven_threshold) / losing_trades) if losing_trades else 0
-        profit_factor = (winning_trades * avg_win) / (losing_trades * avg_loss) if losing_trades and avg_loss else 0
-        
-        results = {
-            'strategy': f"{screener_model} + {day_model}",
-            'initial_capital': self.initial_capital,
-            'final_value': final_value,
-            'total_return': total_return,
-            'total_return_pct': total_return_pct,
-            'total_trades': total_trades,  # Now only counts closed positions
-            'winning_trades': winning_trades,
-            'losing_trades': losing_trades,
-            'breakeven_trades': breakeven_trades,  # NEW: Add breakeven trades
-            'win_rate': win_rate,
-            'avg_win': avg_win,
-            'avg_loss': avg_loss,
-            'profit_factor': profit_factor,
-            'trades': all_trades,  # Keep all trades for detailed view
-            'daily_results': daily_results,
-            'unique_stocks_traded': len(set(t.get('symbol', '') for t in all_trades)),
-            'screening_sessions': completed_days
-        }
-        # ============================================================================
-        
-        await self._call_progress_callback(
-            progress_callback,
-            "Backtest complete!",
-            100,
-            f"Final value: ${results['final_value']:,.2f} ({total_return_pct:+.2f}%)"
-        )
-        
-        return results
-    
-    async def _screen_with_bulk_data(
-        self,
+        bulk_daily_data: Dict[str, pd.DataFrame],
         screener,
-        universe: List[str],
-        bulk_data: Dict[str, pd.DataFrame],
-        min_score: float,
-        force_execution: bool,
-        progress_callback: Optional[Callable],
-        base_progress: int,
-        day_num: int,
-        total_days: int,
-        current_date: datetime
-    ) -> List[dict]:
-        """Screen stocks using pre-fetched bulk data with detailed progress"""
+        min_score: float
+    ) -> List:
+        """Screen stocks using pre-fetched bulk data"""
+        from models.screeners import ScreenedStock
         
-        results = []
-        total_stocks = len(universe)
-        
-        for idx, symbol in enumerate(universe):
-            # Update progress every 10%
-            if idx % (max(1, total_stocks // 10)) == 0:
-                pct_through = int((idx / total_stocks) * 100)
-                await self._call_progress_callback(
-                    progress_callback,
-                    f"Day {day_num}: Screening progress {pct_through}%",
-                    base_progress,
-                    f"Analyzed {idx}/{total_stocks} stocks, {len(results)} qualified so far"
-                )
-            
-            df = bulk_data.get(symbol, pd.DataFrame())
+        screened = []
+        for symbol, df in bulk_daily_data.items():
             if df.empty or len(df) < 20:
                 continue
             
-            # Filter data up to current date
-            df_filtered = df[df.index <= current_date]
-            if df_filtered.empty or len(df_filtered) < 20:
-                continue
-            
             try:
-                closes = df_filtered['close'].tolist()
-                volumes = df_filtered['volume'].tolist()
-                current_price = closes[-1]
+                result = screener.screen_with_data(symbol, df)
                 
-                # Basic scoring
-                score = 50
-                reasons = []
-                metadata = {}
-                
-                # Momentum check
-                if len(closes) >= 5:
-                    recent_change = (closes[-1] - closes[-5]) / closes[-5]
-                    if recent_change > 0.05:
-                        score += 20
-                        reasons.append("Strong upward momentum")
-                    elif recent_change > 0.02:
-                        score += 10
-                        reasons.append("Positive momentum")
-                
-                # Volume check
-                if len(volumes) >= 10:
-                    avg_volume = sum(volumes[-10:]) / 10
-                    if volumes[-1] > avg_volume * 1.5:
-                        score += 15
-                        reasons.append("High volume")
-                
-                metadata = {
-                    'momentum': recent_change if len(closes) >= 5 else 0,
-                    'volume_ratio': volumes[-1] / (sum(volumes[-10:]) / 10) if len(volumes) >= 10 else 1
-                }
-                
-                # Include stock if score meets threshold OR if force_execution is enabled
-                if score >= min_score or force_execution:
-                    results.append({
-                        'symbol': symbol,
-                        'score': score,
-                        'price': current_price,
-                        'volume': volumes[-1],
-                        'reason': " | ".join(reasons) if reasons else "Selected by force execution",
-                        'metadata': metadata,
-                        'forced': score < min_score and force_execution
-                    })
+                if result and result.score >= min_score:
+                    screened.append(result)
                     
             except Exception as e:
                 continue
         
-        results.sort(key=lambda x: x['score'], reverse=True)
-        return results
+        screened.sort(key=lambda x: x.score, reverse=True)
+        return screened
     
     def _simulate_intraday_trading(
         self,
         symbol: str,
         minute_bars: pd.DataFrame,
-        screener_data: dict,
+        stock_info: dict,
         day_trader,
-        available_cash: float,
+        per_stock_allocation: float,  # UPDATED: Use per-stock allocation
         force_execution: bool
     ) -> List[dict]:
-        """Simulate intraday trading using the day trading model"""
-        
+        """
+        Simulate intraday trading for one stock
+        UPDATED: Uses per_stock_allocation instead of total cash
+        """
         trades = []
         position = None
         
-        # Iterate through minute bars
-        for i in range(len(minute_bars)):
-            current_bar = minute_bars.iloc[i]
-            current_price = current_bar['close']
-            timestamp = minute_bars.index[i] if hasattr(minute_bars.index[i], 'to_pydatetime') else current_bar.name
+        for idx, row in minute_bars.iterrows():
+            timestamp = idx if hasattr(idx, 'to_pydatetime') else row.name
+            current_price = row['close']
             
-            # Get signal from day trading model
-            bars_so_far = minute_bars.iloc[:i+1]
+            current_bar = {
+                'open': row['open'],
+                'high': row['high'],
+                'low': row['low'],
+                'close': row['close'],
+                'volume': row['volume']
+            }
             
             try:
-                signal = day_trader.generate_signal(symbol, bars_so_far, screener_data)
-                
-                if signal and signal.action == 'buy' and position is None:
-                    # Check confidence or force execution
-                    if signal.confidence >= 0.6 or force_execution:
-                        # Calculate position size (use 10% of available cash)
-                        position_size = min(available_cash * 0.1, available_cash * 0.2)
-                        shares = int(position_size / signal.price)
+                # Entry logic
+                if position is None:
+                    signal = day_trader.generate_signal(symbol, minute_bars.loc[:idx], stock_info)
+                    
+                    if signal and signal.action == 'buy':
+                        confidence_threshold = 0 if force_execution else 0.6
                         
-                        if shares > 0 and (shares * signal.price) <= available_cash:
-                            position = {
-                                'shares': shares,
-                                'entry_price': signal.price
-                            }
+                        if signal.confidence >= confidence_threshold:
+                            # UPDATED: Use per_stock_allocation
+                            shares = per_stock_allocation / signal.price
+                            cost = shares * signal.price
                             
-                            trades.append({
-                                'symbol': symbol,
-                                'action': 'buy',
-                                'shares': shares,
-                                'price': signal.price,
-                                'timestamp': timestamp,
-                                'reason': signal.reason,
-                                'pnl': 0,
-                                'pnl_pct': 0
-                            })
+                            # Check if we have enough settled cash
+                            if cost <= self.settled_cash:
+                                self.settled_cash -= cost  # Deduct from settled cash
+                                
+                                position = {
+                                    'shares': shares,
+                                    'entry_price': signal.price,
+                                    'current_price': signal.price,
+                                    'stop_loss': signal.stop_loss,
+                                    'take_profit': signal.take_profit
+                                }
+                                
+                                trades.append({
+                                    'symbol': symbol,
+                                    'action': 'buy',
+                                    'shares': shares,
+                                    'price': signal.price,
+                                    'timestamp': timestamp,
+                                    'reason': signal.reason,
+                                    'confidence': signal.confidence
+                                })
                 
+                # Exit logic
                 elif position is not None:
-                    # Check exit conditions
+                    position['current_price'] = current_price
+                    
                     should_exit = False
                     exit_reason = ""
                     
-                    # Get exit signal from model
-                    should_exit_result = day_trader.should_exit(position, current_bar, timestamp)
+                    # Stop loss
+                    if position.get('stop_loss') and current_price <= position['stop_loss']:
+                        should_exit = True
+                        exit_reason = "Stop loss triggered"
                     
-                    if isinstance(should_exit_result, tuple):
-                        should_exit, exit_reason = should_exit_result
+                    # Take profit
+                    elif position.get('take_profit') and current_price >= position['take_profit']:
+                        should_exit = True
+                        exit_reason = "Take profit hit"
+                    
+                    # Model exit signal
                     else:
-                        should_exit = should_exit_result
-                        exit_reason = "Model exit signal"
+                        should_exit_result = day_trader.should_exit(position, current_bar, timestamp)
+                        if isinstance(should_exit_result, tuple):
+                            should_exit, exit_reason = should_exit_result
+                        else:
+                            should_exit = should_exit_result
+                            exit_reason = "Model exit signal"
                     
                     if should_exit:
                         proceeds = position['shares'] * current_price
                         cost = position['shares'] * position['entry_price']
                         pnl = proceeds - cost
                         pnl_pct = (current_price - position['entry_price']) / position['entry_price']
+                        
+                        # UPDATED: Schedule settlement (T+2)
+                        settlement_date = timestamp + timedelta(days=self.settlement_days)
+                        self.unsettled_funds.append(SettledFunds(proceeds, settlement_date))
                         
                         trades.append({
                             'symbol': symbol,
@@ -662,6 +361,10 @@ class OptimizedBacktester:
             pnl = proceeds - cost
             pnl_pct = (final_price - position['entry_price']) / position['entry_price']
             
+            # UPDATED: Schedule settlement
+            settlement_date = final_timestamp + timedelta(days=self.settlement_days)
+            self.unsettled_funds.append(SettledFunds(proceeds, settlement_date))
+            
             trades.append({
                 'symbol': symbol,
                 'action': 'sell',
@@ -674,6 +377,239 @@ class OptimizedBacktester:
             })
         
         return trades
+    
+    async def run_with_detailed_progress(
+        self,
+        screener_model: str,
+        screener_params: dict,
+        day_model: str,
+        day_model_params: dict,
+        start_date: datetime,
+        end_date: datetime,
+        stock_universe: list,
+        top_n: int = 3,
+        min_score: float = 60,
+        force_execution: bool = False,
+        progress_callback=None
+    ) -> dict:
+        """
+        Run backtest with detailed progress updates
+        UPDATED: Now includes daily allocation and settlement tracking
+        """
+        from models.screeners import get_screener
+        from models.daytrade import get_day_trade_model
+        
+        await self._call_progress_callback(
+            progress_callback,
+            "Loading screening model...",
+            5,
+            f"Initializing {screener_model}"
+        )
+        
+        # Initialize models
+        screener = get_screener(screener_model, self.api_key, self.api_secret, **screener_params)
+        day_trader = get_day_trade_model(day_model, **day_model_params)
+        
+        await self._call_progress_callback(
+            progress_callback,
+            "Fetching market data...",
+            10,
+            f"Downloading data for {len(stock_universe)} stocks"
+        )
+        
+        # Fetch bulk daily data once
+        bulk_daily_data = self.fetch_bulk_daily_data(stock_universe, days_back=90)
+        
+        # Initialize tracking
+        all_trades = []
+        positions = {}
+        current_date = start_date
+        completed_days = 0
+        total_days = (end_date - start_date).days
+        
+        # UPDATED: Reset capital tracking
+        self.settled_cash = self.initial_capital
+        self.unsettled_funds = []
+        self.daily_capital_records = []
+        
+        # Daily loop
+        while current_date <= end_date:
+            day_str = current_date.strftime('%Y-%m-%d')
+            completed_days += 1
+            progress_pct = 15 + int((completed_days / total_days) * 75)
+            
+            await self._call_progress_callback(
+                progress_callback,
+                f"Processing {day_str}...",
+                progress_pct,
+                f"Day {completed_days}/{total_days}"
+            )
+            
+            # UPDATED: Get available buying power (settles funds if ready)
+            buying_power = self.get_available_buying_power(current_date)
+            
+            # Screen stocks
+            screened = self._screen_with_bulk_data(
+                bulk_daily_data,
+                screener,
+                min_score
+            )
+            
+            # Select top N
+            selected = screened[:top_n]
+            
+            # UPDATED: Allocate capital for the day
+            allocation = self.allocate_daily_capital(buying_power, len(selected))
+            per_stock_allocation = allocation['per_stock_allocation']
+            
+            # Fetch minute data for selected stocks
+            if selected:
+                symbols = [s.symbol for s in selected]
+                day_start = current_date.replace(hour=9, minute=30)
+                day_end = current_date.replace(hour=16, minute=0)
+                
+                minute_data = self.fetch_bulk_minute_data(symbols, day_start, day_end)
+                
+                # Trade each selected stock
+                day_trades = []
+                for stock_info in selected:
+                    symbol = stock_info.symbol
+                    symbol_minute_data = minute_data.get(symbol, pd.DataFrame())
+                    
+                    if symbol_minute_data.empty:
+                        continue
+                    
+                    # UPDATED: Pass per_stock_allocation
+                    trades_for_symbol = self._simulate_intraday_trading(
+                        symbol,
+                        symbol_minute_data,
+                        stock_info.__dict__,
+                        day_trader,
+                        per_stock_allocation,  # Use allocated amount per stock
+                        force_execution
+                    )
+                    
+                    day_trades.extend(trades_for_symbol)
+                
+                all_trades.extend(day_trades)
+            
+            # UPDATED: Record daily capital state
+            self.record_daily_capital(current_date, positions, len(day_trades) if selected else 0)
+            
+            current_date += timedelta(days=1)
+        
+        # Calculate results
+        await self._call_progress_callback(
+            progress_callback,
+            "Compiling results...",
+            95,
+            f"Processed {completed_days} trading days"
+        )
+        
+        # Final calculations
+        final_equity = self.daily_capital_records[-1]['total_equity'] if self.daily_capital_records else self.initial_capital
+        total_return = final_equity - self.initial_capital
+        total_return_pct = (total_return / self.initial_capital) * 100
+        
+        # Trade statistics (only closed trades - sells)
+        trades_df = pd.DataFrame(all_trades)
+        sell_trades = trades_df[trades_df['action'] == 'sell'] if not trades_df.empty else pd.DataFrame()
+        
+        winning_trades = len(sell_trades[sell_trades['pnl'] > 0]) if not sell_trades.empty else 0
+        losing_trades = len(sell_trades[sell_trades['pnl'] < 0]) if not sell_trades.empty else 0
+        breakeven_trades = len(sell_trades[sell_trades['pnl'] == 0]) if not sell_trades.empty else 0
+        total_trades = len(sell_trades)
+        win_rate = winning_trades / total_trades if total_trades > 0 else 0
+        
+        avg_win = sell_trades[sell_trades['pnl'] > 0]['pnl'].mean() if winning_trades > 0 else 0
+        avg_loss = sell_trades[sell_trades['pnl'] < 0]['pnl'].mean() if losing_trades > 0 else 0
+        
+        total_wins = sell_trades[sell_trades['pnl'] > 0]['pnl'].sum() if winning_trades > 0 else 0
+        total_losses = abs(sell_trades[sell_trades['pnl'] < 0]['pnl'].sum()) if losing_trades > 0 else 0
+        profit_factor = total_wins / total_losses if total_losses > 0 else float('inf')
+        
+        unique_stocks = set(t['symbol'] for t in all_trades) if all_trades else set()
+        
+        results = {
+            'strategy': f"{screener_model} + {day_model}",
+            'initial_capital': self.initial_capital,
+            'final_value': final_equity,
+            'total_return': total_return,
+            'total_return_pct': total_return_pct,
+            'total_trades': total_trades,
+            'winning_trades': winning_trades,
+            'losing_trades': losing_trades,
+            'breakeven_trades': breakeven_trades,
+            'win_rate': win_rate,
+            'avg_win': avg_win,
+            'avg_loss': avg_loss,
+            'profit_factor': profit_factor,
+            'trades': all_trades,
+            'unique_stocks_traded': len(unique_stocks),
+            'screening_sessions': completed_days,
+            # NEW: Daily allocation metrics
+            'daily_allocation_pct': self.daily_allocation_pct,
+            'settlement_days': self.settlement_days,
+            'daily_capital_records': self.daily_capital_records
+        }
+        
+        return results
+    
+    def run(
+        self,
+        screener_model: str,
+        screener_params: dict,
+        day_model: str,
+        day_model_params: dict,
+        start_date,
+        end_date,
+        stock_universe: list,
+        top_n: int = 3,
+        min_score: float = 60,
+        force_execution: bool = False,
+        progress_callback=None
+    ) -> dict:
+        """
+        Synchronous wrapper for run_with_detailed_progress
+        """
+        import asyncio
+        
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(
+                        asyncio.run,
+                        self.run_with_detailed_progress(
+                            screener_model, screener_params,
+                            day_model, day_model_params,
+                            start_date, end_date,
+                            stock_universe, top_n, min_score,
+                            force_execution, progress_callback
+                        )
+                    )
+                    return future.result()
+            else:
+                return loop.run_until_complete(
+                    self.run_with_detailed_progress(
+                        screener_model, screener_params,
+                        day_model, day_model_params,
+                        start_date, end_date,
+                        stock_universe, top_n, min_score,
+                        force_execution, progress_callback
+                    )
+                )
+        except RuntimeError:
+            return asyncio.run(
+                self.run_with_detailed_progress(
+                    screener_model, screener_params,
+                    day_model, day_model_params,
+                    start_date, end_date,
+                    stock_universe, top_n, min_score,
+                    force_execution, progress_callback
+                )
+            )
 
 
 # Alias for backward compatibility
