@@ -4,6 +4,7 @@ Includes SSE streaming for real-time progress updates
 UNIVERSAL VERSION: Works with both IntegratedBacktester and OptimizedBacktester
 
 FIXED: Properly handles trade fields that may not exist (pnl, pnl_pct)
+FIXED: Added breakeven_trades to API responses
 """
 
 import logging
@@ -78,7 +79,7 @@ async def comprehensive_backtest_stream(
             
             logger.info(f"🚀 Starting SSE backtest: {screener_model} + {day_model}")
             
-            # Create backtester using the imported class (works with either name)
+            # Create backtester
             backtester = Backtester(
                 api_key=settings.alpaca_key,
                 api_secret=settings.alpaca_secret,
@@ -165,7 +166,7 @@ async def comprehensive_backtest_stream(
                         'pnl_pct': trade.get('pnl_pct', 0) * 100  # Default to 0 if not present
                     })
             
-            # Prepare final results
+            # Prepare final results with breakeven_trades
             final_results = {
                 'status': 'success',
                 'strategy': results['strategy'],
@@ -175,6 +176,7 @@ async def comprehensive_backtest_stream(
                 'total_trades': results['total_trades'],
                 'winning_trades': results['winning_trades'],
                 'losing_trades': results['losing_trades'],
+                'breakeven_trades': results.get('breakeven_trades', 0),  # FIXED: Added breakeven_trades
                 'win_rate': results['win_rate'] * 100,
                 'avg_win': results['avg_win'],
                 'avg_loss': results['avg_loss'],
@@ -292,6 +294,7 @@ async def run_comprehensive_backtest(params: ComprehensiveBacktestParams):
             'total_trades': results['total_trades'],
             'winning_trades': results['winning_trades'],
             'losing_trades': results['losing_trades'],
+            'breakeven_trades': results.get('breakeven_trades', 0),  # FIXED: Added breakeven_trades
             'win_rate': results['win_rate'] * 100,
             'avg_win': results['avg_win'],
             'avg_loss': results['avg_loss'],

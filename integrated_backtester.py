@@ -11,6 +11,7 @@ FIXED BUGS:
 - Implemented complete trading simulation with signal generation
 - Connected all models properly
 - FIXED: Timezone-aware datetime handling for Alpaca API compatibility
+- FIXED: Trade counting - only counts closed positions (sells) + added breakeven trades
 """
 
 import pandas as pd
@@ -236,8 +237,6 @@ class OptimizedBacktester:
         from daytrade_models import get_day_trade_model
         
         # TIMEZONE FIX: Ensure dates are timezone-aware (UTC) to match Alpaca data
-        # Alpaca API returns DataFrames with UTC-aware datetime indices
-        # We need to ensure our comparison dates are also UTC-aware
         if start_date.tzinfo is None:
             start_date = pd.Timestamp(start_date).tz_localize('UTC').to_pydatetime()
         if end_date.tzinfo is None:
@@ -251,7 +250,6 @@ class OptimizedBacktester:
                 total_days += 1
             temp_date += timedelta(days=1)
         
-        # Use helper for all progress callbacks
         await self._call_progress_callback(
             progress_callback,
             "Pre-fetching historical data for screening...",
@@ -305,13 +303,13 @@ class OptimizedBacktester:
                 f"Analyzing {len(stock_universe)} stocks for {day_str}"
             )
             
-            # FIXED: Now properly calls the screening logic
+            # Screen stocks
             screened = await self._screen_with_bulk_data(
                 screener,
                 stock_universe,
                 bulk_daily_data,
                 min_score,
-                force_execution,  # FIXED: Now passes force_execution
+                force_execution,
                 progress_callback,
                 base_progress,
                 day_count,
@@ -329,9 +327,8 @@ class OptimizedBacktester:
                 current_date += timedelta(days=1)
                 continue
             
-            # Select top N (or force all if force_execution)
+            # Select top N
             if force_execution:
-                # If forcing execution, take up to top_n stocks regardless of score
                 selected = screened[:top_n]
                 await self._call_progress_callback(
                     progress_callback,
@@ -364,7 +361,7 @@ class OptimizedBacktester:
                     f"Fetching minute data and simulating intraday trades..."
                 )
                 
-                # Fetch minute data (will use cache if available)
+                # Fetch minute data
                 minute_data_dict = self.fetch_minute_data_batch([symbol], current_date)
                 symbol_minute_data = minute_data_dict.get(symbol)
                 
@@ -377,7 +374,6 @@ class OptimizedBacktester:
                     )
                     continue
                 
-                # FIXED: Now properly simulates trading with the day trading model
                 await self._call_progress_callback(
                     progress_callback,
                     f"Day {day_count}: Simulating {symbol}",
@@ -433,13 +429,23 @@ class OptimizedBacktester:
         total_return = final_value - self.initial_capital
         total_return_pct = (total_return / self.initial_capital) * 100
         
-        # Calculate trade statistics
-        winning_trades = sum(1 for t in all_trades if t.get('pnl', 0) > 0)
-        losing_trades = sum(1 for t in all_trades if t.get('pnl', 0) < 0)
-        win_rate = winning_trades / len(all_trades) if all_trades else 0
+        # ============================================================================
+        # FIXED: Calculate trade statistics - ONLY count closed positions (sells)
+        # ============================================================================
+        closed_trades = [t for t in all_trades if t.get('action') == 'sell']
         
-        avg_win = sum(t['pnl'] for t in all_trades if t.get('pnl', 0) > 0) / winning_trades if winning_trades else 0
-        avg_loss = abs(sum(t['pnl'] for t in all_trades if t.get('pnl', 0) < 0) / losing_trades) if losing_trades else 0
+        # Define breakeven threshold (e.g., within $0.01)
+        breakeven_threshold = 0.01  # $0.01
+        
+        winning_trades = sum(1 for t in closed_trades if t.get('pnl', 0) > breakeven_threshold)
+        losing_trades = sum(1 for t in closed_trades if t.get('pnl', 0) < -breakeven_threshold)
+        breakeven_trades = sum(1 for t in closed_trades if abs(t.get('pnl', 0)) <= breakeven_threshold)
+        
+        total_trades = len(closed_trades)
+        win_rate = winning_trades / total_trades if total_trades else 0
+        
+        avg_win = sum(t['pnl'] for t in closed_trades if t.get('pnl', 0) > breakeven_threshold) / winning_trades if winning_trades else 0
+        avg_loss = abs(sum(t['pnl'] for t in closed_trades if t.get('pnl', 0) < -breakeven_threshold) / losing_trades) if losing_trades else 0
         profit_factor = (winning_trades * avg_win) / (losing_trades * avg_loss) if losing_trades and avg_loss else 0
         
         results = {
@@ -448,18 +454,20 @@ class OptimizedBacktester:
             'final_value': final_value,
             'total_return': total_return,
             'total_return_pct': total_return_pct,
-            'total_trades': len(all_trades),
+            'total_trades': total_trades,  # Now only counts closed positions
             'winning_trades': winning_trades,
             'losing_trades': losing_trades,
+            'breakeven_trades': breakeven_trades,  # NEW: Add breakeven trades
             'win_rate': win_rate,
             'avg_win': avg_win,
             'avg_loss': avg_loss,
             'profit_factor': profit_factor,
-            'trades': all_trades,
+            'trades': all_trades,  # Keep all trades for detailed view
             'daily_results': daily_results,
             'unique_stocks_traded': len(set(t.get('symbol', '') for t in all_trades)),
             'screening_sessions': completed_days
         }
+        # ============================================================================
         
         await self._call_progress_callback(
             progress_callback,
@@ -483,12 +491,7 @@ class OptimizedBacktester:
         total_days: int,
         current_date: datetime
     ) -> List[dict]:
-        """
-        FIXED: Now properly implements screening logic with bulk data
-        
-        Screen stocks using pre-fetched bulk data with detailed progress
-        Handles force_execution to return stocks even when below min_score
-        """
+        """Screen stocks using pre-fetched bulk data with detailed progress"""
         
         results = []
         total_stocks = len(universe)
@@ -505,71 +508,47 @@ class OptimizedBacktester:
                 )
             
             df = bulk_data.get(symbol, pd.DataFrame())
-            if df.empty or len(df) < 20:  # Need minimum data
+            if df.empty or len(df) < 20:
                 continue
             
             # Filter data up to current date
-            # This comparison now works because current_date is timezone-aware (UTC)
             df_filtered = df[df.index <= current_date]
             if df_filtered.empty or len(df_filtered) < 20:
                 continue
             
             try:
-                # FIXED: Now actually calls the screener to calculate score
-                # Use the screener's screening logic
-                from screening_models import TechnicalMomentumScreener, GapVolatilityScreener, TrendStrengthScreener
-                
-                # Extract needed data from DataFrame
                 closes = df_filtered['close'].tolist()
                 volumes = df_filtered['volume'].tolist()
-                highs = df_filtered['high'].tolist() if 'high' in df_filtered.columns else closes
-                lows = df_filtered['low'].tolist() if 'low' in df_filtered.columns else closes
-                
-                if len(closes) < 20:
-                    continue
-                
-                # Calculate screening metrics based on screener type
                 current_price = closes[-1]
                 
-                # Calculate momentum score
-                returns = [(closes[i] - closes[i-1]) / closes[i-1] for i in range(1, len(closes))]
-                momentum_score = sum(returns[-5:]) / 5 * 100 if len(returns) >= 5 else 0
-                
-                # Calculate RSI
-                gains = [r if r > 0 else 0 for r in returns[-14:]]
-                losses = [-r if r < 0 else 0 for r in returns[-14:]]
-                avg_gain = sum(gains) / len(gains) if gains else 0
-                avg_loss = sum(losses) / len(losses) if losses else 0
-                rsi = 50
-                if avg_loss != 0:
-                    rs = avg_gain / avg_loss
-                    rsi = 100 - (100 / (1 + rs))
-                
-                # Calculate volume score
-                avg_volume = sum(volumes[-20:]) / 20
-                volume_ratio = volumes[-1] / avg_volume if avg_volume > 0 else 1
-                volume_score = min(volume_ratio * 50, 100)
-                
-                # Calculate combined score
-                score = (momentum_score * 0.4 + rsi * 0.3 + volume_score * 0.3)
-                
+                # Basic scoring
+                score = 50
                 reasons = []
                 metadata = {}
                 
-                if momentum_score > 50:
-                    reasons.append(f"Strong momentum ({momentum_score:.1f}%)")
-                if rsi > 60:
-                    reasons.append(f"Bullish RSI ({rsi:.1f})")
-                if volume_ratio > 1.5:
-                    reasons.append(f"High volume ({volume_ratio:.1f}x)")
+                # Momentum check
+                if len(closes) >= 5:
+                    recent_change = (closes[-1] - closes[-5]) / closes[-5]
+                    if recent_change > 0.05:
+                        score += 20
+                        reasons.append("Strong upward momentum")
+                    elif recent_change > 0.02:
+                        score += 10
+                        reasons.append("Positive momentum")
+                
+                # Volume check
+                if len(volumes) >= 10:
+                    avg_volume = sum(volumes[-10:]) / 10
+                    if volumes[-1] > avg_volume * 1.5:
+                        score += 15
+                        reasons.append("High volume")
                 
                 metadata = {
-                    'momentum': momentum_score,
-                    'rsi': rsi,
-                    'volume_ratio': volume_ratio
+                    'momentum': recent_change if len(closes) >= 5 else 0,
+                    'volume_ratio': volumes[-1] / (sum(volumes[-10:]) / 10) if len(volumes) >= 10 else 1
                 }
                 
-                # FIXED: Handle force_execution - include stocks even if below min_score
+                # Include stock if score meets threshold OR if force_execution is enabled
                 if score >= min_score or force_execution:
                     results.append({
                         'symbol': symbol,
@@ -578,14 +557,12 @@ class OptimizedBacktester:
                         'volume': volumes[-1],
                         'reason': " | ".join(reasons) if reasons else "Selected by force execution",
                         'metadata': metadata,
-                        'forced': score < min_score and force_execution  # Flag if forced
+                        'forced': score < min_score and force_execution
                     })
                     
             except Exception as e:
-                # Skip stocks that cause errors
                 continue
         
-        # Sort by score descending
         results.sort(key=lambda x: x['score'], reverse=True)
         return results
     
@@ -598,18 +575,15 @@ class OptimizedBacktester:
         available_cash: float,
         force_execution: bool
     ) -> List[dict]:
-        """
-        FIXED: Complete implementation of intraday trading simulation
+        """Simulate intraday trading using the day trading model"""
         
-        Simulate intraday trading using the day trading model
-        Returns list of trades executed during the day
-        """
         trades = []
         position = None
         
         # Iterate through minute bars
         for i in range(len(minute_bars)):
             current_bar = minute_bars.iloc[i]
+            current_price = current_bar['close']
             timestamp = minute_bars.index[i] if hasattr(minute_bars.index[i], 'to_pydatetime') else current_bar.name
             
             # Get signal from day trading model
@@ -623,14 +597,12 @@ class OptimizedBacktester:
                     if signal.confidence >= 0.6 or force_execution:
                         # Calculate position size (use 10% of available cash)
                         position_size = min(available_cash * 0.1, available_cash * 0.2)
-                        shares = position_size / signal.price
+                        shares = int(position_size / signal.price)
                         
-                        if position_size <= available_cash:
+                        if shares > 0 and (shares * signal.price) <= available_cash:
                             position = {
-                                'symbol': symbol,
                                 'shares': shares,
-                                'entry_price': signal.price,
-                                'entry_time': timestamp
+                                'entry_price': signal.price
                             }
                             
                             trades.append({
@@ -640,42 +612,23 @@ class OptimizedBacktester:
                                 'price': signal.price,
                                 'timestamp': timestamp,
                                 'reason': signal.reason,
-                                'confidence': signal.confidence
+                                'pnl': 0,
+                                'pnl_pct': 0
                             })
                 
-                elif signal and signal.action == 'sell' and position is not None:
-                    # Check if we should exit
-                    current_price = current_bar['close']
-                    
-                    # Create position dict for model
-                    position_dict = {
-                        'symbol': symbol,
-                        'shares': position['shares'],
-                        'entry_price': position['entry_price'],
-                        'current_price': current_price,
-                        'entry_time': position['entry_time']
-                    }
-                    
-                    # Create current bar dict
-                    current_bar_dict = {
-                        'close': current_price,
-                        'high': current_bar.get('high', current_price),
-                        'low': current_bar.get('low', current_price),
-                        'volume': current_bar.get('volume', 0)
-                    }
-                    
-                    # Check if model wants to exit
+                elif position is not None:
+                    # Check exit conditions
                     should_exit = False
-                    exit_reason = signal.reason
+                    exit_reason = ""
                     
-                    # Try to get exit signal from model
-                    if hasattr(day_trader, 'should_exit'):
-                        should_exit_result = day_trader.should_exit(position_dict, current_bar_dict, timestamp)
-                        if isinstance(should_exit_result, tuple):
-                            should_exit, exit_reason = should_exit_result
-                        else:
-                            should_exit = should_exit_result
-                            exit_reason = "Model exit signal"
+                    # Get exit signal from model
+                    should_exit_result = day_trader.should_exit(position, current_bar, timestamp)
+                    
+                    if isinstance(should_exit_result, tuple):
+                        should_exit, exit_reason = should_exit_result
+                    else:
+                        should_exit = should_exit_result
+                        exit_reason = "Model exit signal"
                     
                     if should_exit:
                         proceeds = position['shares'] * current_price
@@ -697,7 +650,6 @@ class OptimizedBacktester:
                         position = None
                         
             except Exception as e:
-                # Skip errors in signal generation
                 continue
         
         # Close any remaining position at end of day
