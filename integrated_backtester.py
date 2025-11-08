@@ -233,8 +233,7 @@ class OptimizedBacktester:
         
         FIXED: Now properly implements screening and trading logic with force_execution support
         """
-        from screening_models import get_screener
-        from daytrade_models import get_day_trade_model
+        from models import get_screener, get_day_trade_model
         
         # TIMEZONE FIX: Ensure dates are timezone-aware (UTC) to match Alpaca data
         if start_date.tzinfo is None:
